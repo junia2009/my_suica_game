@@ -141,14 +141,24 @@
 
 const { Engine, World, Bodies, Body, Composite, Events } = Matter;
 
-// ---- 論理サイズ（固定） -------------------------------------------------
-const W = 640;
-const H = 800;
-const WALL = 26;             // 壁の厚み
-const DEAD_LINE = 140;       // デッドライン y
+// ---- 論理サイズ -------------------------------------------------
+// 横幅は固定で少し縮小。高さは端末の画面比に合わせて起動時に決定し、
+// 縦長スマホで上下に大きな余白（デッドゾーン）が出ないようにする。
+const W = 560;               // 横幅（従来640から縮小）
+const WALL = 14;             // 壁を薄くして端ギリギリまで置けるように
+let H = 940;                 // computeLogicalSize() で画面比から上書き
+let DEAD_LINE = 150;         // デッドライン y（Hに比例、同上）
 const DEAD_TIME = 1.5;       // 超過継続でゲームオーバー(秒)
 const COOLDOWN = 420;        // 投下クールダウン(ms)
 const GAMEOVER_GRACE = 1200; // 開始直後の判定猶予(ms)
+
+function computeLogicalSize(){
+  const vw = Math.max(1, window.innerWidth);
+  const vh = Math.max(1, window.innerHeight);
+  // 画面の縦横比に合わせて H を決定（極端に細長く/短くならないようクランプ）
+  H = Math.round(Math.min(W*2.0, Math.max(W*1.35, W * (vh/vw))));
+  DEAD_LINE = Math.round(H * 0.15);
+}
 
 // ---- スライム定義 (§2) --------------------------------------------------
 // score は三角数ベース n(n+1)/2
@@ -1517,6 +1527,7 @@ function star(cx, cy, spikes, outer, inner){
 // =========================================================================
 //  ブート
 // =========================================================================
+computeLogicalSize();
 fitStage();
 setupPhysics();
 initAmbient();
