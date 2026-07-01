@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<meta name="theme-color" content="#bfe9ff" />
+<meta name="theme-color" content="#02132a" />
 <title>スライム合成パズル</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -12,9 +12,9 @@
     padding: 0;
     height: 100%;
     overflow: hidden;
-    background: linear-gradient(160deg, #cdeeff 0%, #dff6e6 100%);
+    background: radial-gradient(120% 90% at 50% -10%, #0b3a5e 0%, #062942 35%, #03203a 65%, #010f22 100%);
     font-family: "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", "Segoe UI", system-ui, sans-serif;
-    color: #3a4a55;
+    color: #dbeeff;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
@@ -28,10 +28,10 @@
   }
   #stage {
     position: relative;
-    box-shadow: 0 18px 50px rgba(80, 120, 150, 0.35);
+    box-shadow: 0 24px 70px rgba(0, 15, 35, 0.65), 0 0 0 1px rgba(120,200,240,0.12) inset;
     border-radius: 18px;
     overflow: hidden;
-    background: #eafaff;
+    background: #03192f;
   }
   canvas { display: block; }
 
@@ -44,9 +44,9 @@
     align-items: center;
     justify-content: center;
     gap: 18px;
-    background: rgba(40, 70, 90, 0.55);
-    backdrop-filter: blur(3px);
-    color: #fff;
+    background: radial-gradient(120% 100% at 50% 0%, rgba(10,45,72,0.62), rgba(2,15,34,0.78));
+    backdrop-filter: blur(4px);
+    color: #eaf6ff;
     text-align: center;
     z-index: 10;
     opacity: 0;
@@ -58,7 +58,8 @@
     margin: 0;
     font-size: 40px;
     letter-spacing: 2px;
-    text-shadow: 0 3px 0 rgba(0,0,0,0.15);
+    color: #eafcff;
+    text-shadow: 0 0 18px rgba(90,210,255,0.55), 0 2px 2px rgba(0,0,0,0.4);
   }
   .overlay p { margin: 0; font-size: 20px; }
   .overlay .big { font-size: 30px; font-weight: 700; }
@@ -70,15 +71,15 @@
     font-size: 22px;
     font-weight: 700;
     font-family: inherit;
-    color: #fff;
-    background: linear-gradient(180deg, #ff9ec4, #ff6fa5);
-    box-shadow: 0 6px 0 #d94f86, 0 10px 18px rgba(0,0,0,0.25);
+    color: #04263a;
+    background: linear-gradient(180deg, #7fe9ff, #3fb8e6);
+    box-shadow: 0 6px 0 #2b86ad, 0 10px 26px rgba(60,190,240,0.4), 0 0 22px rgba(90,220,255,0.35);
     transition: transform 0.08s ease, box-shadow 0.08s ease;
   }
-  .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #d94f86, 0 5px 10px rgba(0,0,0,0.25); }
+  .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #2b86ad, 0 5px 12px rgba(60,190,240,0.35); }
   .stat-card {
-    background: rgba(255,255,255,0.15);
-    border: 2px solid rgba(255,255,255,0.4);
+    background: rgba(140,210,240,0.10);
+    border: 1px solid rgba(140,220,255,0.30);
     border-radius: 16px;
     padding: 14px 26px;
     display: flex;
@@ -96,8 +97,10 @@
     border: none;
     cursor: pointer;
     font-size: 20px;
-    background: rgba(255,255,255,0.75);
-    box-shadow: 0 3px 8px rgba(0,0,0,0.2);
+    color: #eaf6ff;
+    background: rgba(20,55,85,0.6);
+    border: 1px solid rgba(140,220,255,0.3);
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35);
   }
 </style>
 </head>
@@ -205,6 +208,8 @@ let bodies = [];          // slime bodies (Matterのbody, .plugin.slimeにメタ
 let particles = [];       // 合体エフェクト
 let rings = [];           // 波紋エフェクト
 let scorePops = [];       // スコア表示ポップ
+let bubbles = [];         // 深海：立ち上る泡（装飾）
+let motes = [];           // 深海：マリンスノー（漂う微粒子）
 
 let state = 'ready';      // ready | playing | over
 let score = 0;
@@ -479,6 +484,100 @@ function updateEffects(dt){
   }
 }
 
+// -------------------------------------------------------------------------
+//  深海アンビエント（泡・マリンスノー）— ゲーム状態に関係なく常時アニメ
+// -------------------------------------------------------------------------
+function newBubble(anywhere){
+  const r = 2 + Math.random()*7;
+  return {
+    x: Math.random()*W,
+    y: anywhere ? Math.random()*H : H + 12,
+    r,
+    speed: 18 + Math.random()*46 + r*3,   // 大きい泡ほど速く上る
+    wobA: Math.random()*Math.PI*2,
+    wobF: 0.6 + Math.random()*1.6,
+    wobAmp: 4 + Math.random()*12,
+    alpha: 0.10 + Math.random()*0.22,
+    front: Math.random() < 0.22,           // 一部は手前（スライムより前）
+  };
+}
+function initAmbient(){
+  bubbles = [];
+  for(let i=0;i<30;i++) bubbles.push(newBubble(true));
+  motes = [];
+  for(let i=0;i<46;i++) motes.push({
+    x: Math.random()*W, y: Math.random()*H,
+    r: 0.4 + Math.random()*1.7,
+    vx: (Math.random()-0.5)*6, vy: 6 + Math.random()*10, // ゆっくり沈むマリンスノー
+    a: 0.12 + Math.random()*0.4, ph: Math.random()*Math.PI*2,
+  });
+}
+function updateAmbient(dt){
+  for(const b of bubbles){
+    b.y -= b.speed*dt;
+    b.wobA += b.wobF*dt;
+    if(b.y < -16) Object.assign(b, newBubble(false));
+  }
+  for(const m of motes){
+    m.ph += dt*2;
+    m.x += m.vx*dt; m.y += m.vy*dt;
+    if(m.y > H+4){ m.y = -4; m.x = Math.random()*W; }
+    if(m.x < -4) m.x = W+4; else if(m.x > W+4) m.x = -4;
+  }
+}
+function drawBubble(b){
+  const x = b.x + Math.sin(b.wobA)*b.wobAmp;
+  ctx.save();
+  // 本体（薄い塗り＋リング）
+  ctx.globalAlpha = b.alpha*0.4;
+  ctx.fillStyle = 'rgba(180,230,255,1)';
+  ctx.beginPath(); ctx.arc(x, b.y, b.r, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = b.alpha;
+  ctx.lineWidth = Math.max(0.8, b.r*0.16);
+  ctx.strokeStyle = 'rgba(210,245,255,0.9)';
+  ctx.beginPath(); ctx.arc(x, b.y, b.r, 0, Math.PI*2); ctx.stroke();
+  // ハイライト
+  ctx.globalAlpha = Math.min(1, b.alpha*2.2);
+  ctx.fillStyle = 'rgba(255,255,255,0.95)';
+  ctx.beginPath(); ctx.arc(x - b.r*0.34, b.y - b.r*0.34, Math.max(0.7, b.r*0.24), 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawMotes(){
+  ctx.save();
+  for(const m of motes){
+    const tw = 0.45 + 0.55*Math.sin(m.ph);
+    ctx.globalAlpha = m.a*tw;
+    ctx.fillStyle = 'rgba(205,238,255,1)';
+    ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+// 上から差し込む光芒（ゴッドレイ）
+function drawGodrays(t){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const rays = 5;
+  for(let i=0;i<rays;i++){
+    const sway = Math.sin(t*0.00025 + i*1.7)*46;
+    const topX = W*(0.1 + i*0.2) + sway;
+    const halfW = 34 + i*16;
+    const drift = 150;                       // 下に行くほど左へ流れる角度
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0,   'rgba(150,225,255,0.12)');
+    g.addColorStop(0.45,'rgba(120,205,240,0.05)');
+    g.addColorStop(1,   'rgba(120,205,240,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(topX - halfW, -4);
+    ctx.lineTo(topX + halfW, -4);
+    ctx.lineTo(topX + halfW - drift, H);
+    ctx.lineTo(topX - halfW - drift, H);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // =========================================================================
 //  描画 (§10)  — 物理は円、見た目だけ変形/表情
 // =========================================================================
@@ -490,7 +589,7 @@ function draw(){
   ctx.save();
   ctx.translate(sx, sy);
 
-  // 背景
+  // 背景（深海）
   drawBackground();
 
   // スライム
@@ -506,6 +605,9 @@ function draw(){
   // エフェクト
   drawEffects();
 
+  // 前景（手前の泡・ビネット）
+  drawForeground();
+
   ctx.restore();
 
   // 前景UI（シェイクの影響を受けない）
@@ -513,38 +615,86 @@ function draw(){
 }
 
 function drawBackground(){
-  // 箱の中
-  ctx.fillStyle = '#eafaff';
-  ctx.fillRect(0, 0, W, H);
+  const t = performance.now();
 
-  // 内側のやわらかい影
+  // 深海の縦グラデ（水面付近は明るく、深部は闇へ）
   const g = ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,'rgba(180,230,255,0.35)');
-  g.addColorStop(1,'rgba(200,255,220,0.15)');
+  g.addColorStop(0,   '#0e4a72');
+  g.addColorStop(0.35,'#0a3557');
+  g.addColorStop(0.7, '#062339');
+  g.addColorStop(1,   '#03152a');
   ctx.fillStyle = g;
   ctx.fillRect(0,0,W,H);
 
-  // 壁
-  ctx.fillStyle = '#9fd6c0';
+  // 水面からの光（上部を明るく）
+  const surf = ctx.createLinearGradient(0,0,0,H*0.45);
+  surf.addColorStop(0,'rgba(130,215,245,0.28)');
+  surf.addColorStop(1,'rgba(130,215,245,0)');
+  ctx.fillStyle = surf;
+  ctx.fillRect(0,0,W,H*0.45);
+
+  // ゴッドレイ
+  drawGodrays(t);
+
+  // 背景の泡・マリンスノー
+  for(const b of bubbles) if(!b.front) drawBubble(b);
+  drawMotes();
+
+  // ガラスの箱（側面・底）
+  drawWalls();
+
+  // デッドライン（発光する点線）
+  drawDeadline(t);
+}
+
+function drawWalls(){
+  ctx.save();
+  // 側面・底のガラス（うっすら暗い）
+  ctx.fillStyle = 'rgba(6,26,44,0.35)';
   ctx.fillRect(0, 0, WALL, H);
   ctx.fillRect(W-WALL, 0, WALL, H);
   ctx.fillRect(0, H-WALL, W, WALL);
-  // 壁ハイライト
-  ctx.fillStyle = 'rgba(255,255,255,0.25)';
-  ctx.fillRect(WALL-4, 0, 4, H);
-  ctx.fillRect(W-WALL, 0, 4, H);
+  // 内側の発光エッジ
+  ctx.fillStyle = 'rgba(130,220,255,0.22)';
+  ctx.fillRect(WALL-2, 0, 2, H);
+  ctx.fillRect(W-WALL, 0, 2, H);
+  ctx.fillRect(0, H-WALL, W, 2);
+  // 底のやわらかい光
+  const fg = ctx.createLinearGradient(0, H-WALL-46, 0, H-WALL);
+  fg.addColorStop(0,'rgba(80,190,225,0)');
+  fg.addColorStop(1,'rgba(80,190,225,0.12)');
+  ctx.fillStyle = fg;
+  ctx.fillRect(0, H-WALL-46, W, 46);
+  ctx.restore();
+}
 
-  // デッドライン（点線）
-  const blink = state === 'playing' && overLineTime > 0.05;
+function drawDeadline(t){
+  const danger = state === 'playing' && overLineTime > 0.05;
+  const pulse = 0.5 + 0.5*Math.sin(t/150);
   ctx.save();
-  ctx.strokeStyle = blink ? 'rgba(255,90,90,'+(0.5+0.5*Math.sin(performance.now()/120))+')' : 'rgba(255,120,120,0.7)';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = danger
+    ? 'rgba(255,95,95,'+(0.55+0.45*pulse)+')'
+    : 'rgba(120,230,255,'+(0.4+0.25*pulse)+')';
+  ctx.shadowColor = danger ? 'rgba(255,80,80,0.9)' : 'rgba(120,230,255,0.8)';
+  ctx.shadowBlur = danger ? 14 : 9;
+  ctx.lineWidth = 2;
   ctx.setLineDash([14, 10]);
+  ctx.lineDashOffset = -(t/40) % 24;
   ctx.beginPath();
   ctx.moveTo(WALL, DEAD_LINE);
   ctx.lineTo(W-WALL, DEAD_LINE);
   ctx.stroke();
   ctx.restore();
+}
+
+// 前景：手前を横切る泡＋深海ビネット
+function drawForeground(){
+  for(const b of bubbles) if(b.front) drawBubble(b);
+  const v = ctx.createRadialGradient(W/2, H*0.42, H*0.18, W/2, H*0.52, H*0.8);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, 'rgba(0,8,18,0.55)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, W, H);
 }
 
 // ---- スライム本体描画 ----------------------------------------------------
@@ -600,11 +750,25 @@ function drawBlob(cx, cy, r, def, s, angle=0){
 
 // 真球に見せる立体シェーディング（光源は常に左上・複数レイヤーで陰影を重ねる）
 function drawSlimeBody(cx, cy, r, def){
+  // 生物発光グロー（深海）：本体の色で淡いハローを add 合成。上位ほど強く光る
+  const glowCol = def.rainbow ? '#7fe6ff' : (def.metal ? '#d0b8ff' : def.color);
+  const glowStr = 0.22 + Math.min(def.rank, 11)*0.02;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const gl = ctx.createRadialGradient(cx, cy, r*0.55, cx, cy, r*1.65);
+  gl.addColorStop(0, hexToRgba(glowCol, glowStr));
+  gl.addColorStop(1, hexToRgba(glowCol, 0));
+  ctx.fillStyle = gl;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r*1.65, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+
   // 接地の落ち影（ぼかしグラデ）
   ctx.save();
   const sh = ctx.createRadialGradient(cx, cy + r*0.94, r*0.12, cx, cy + r*0.94, r*1.05);
-  sh.addColorStop(0, 'rgba(45,65,85,0.30)');
-  sh.addColorStop(1, 'rgba(45,65,85,0)');
+  sh.addColorStop(0, 'rgba(0,10,20,0.38)');
+  sh.addColorStop(1, 'rgba(0,10,20,0)');
   ctx.fillStyle = sh;
   ctx.beginPath();
   ctx.ellipse(cx, cy + r*0.94, r*1.02, r*0.3, 0, 0, Math.PI*2);
@@ -952,23 +1116,28 @@ function drawEffects(){
 // ---- HUD (§3) ------------------------------------------------------------
 function drawHUD(){
   ctx.save();
+  // 深海の暗背景でも読めるよう、明色＋淡いグロー
+  ctx.shadowColor = 'rgba(10,40,70,0.9)';
+  ctx.shadowBlur = 8;
   // スコア
   ctx.textAlign = 'left';
-  ctx.fillStyle = '#3a6a8a';
-  ctx.font = 'bold 30px sans-serif';
-  ctx.fillText('Score', 40, 46);
-  ctx.font = 'bold 40px sans-serif';
-  ctx.fillText(String(score), 40, 88);
+  ctx.fillStyle = 'rgba(190,230,255,0.85)';
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillText('SCORE', 40, 46);
+  ctx.fillStyle = '#f2fbff';
+  ctx.font = 'bold 42px sans-serif';
+  ctx.fillText(String(score), 40, 90);
 
   ctx.font = 'bold 16px sans-serif';
-  ctx.fillStyle = '#6a8a9a';
-  ctx.fillText('Best ' + bestScore, 42, 110);
+  ctx.fillStyle = 'rgba(150,200,230,0.75)';
+  ctx.fillText('BEST ' + bestScore, 42, 112);
 
   // Next プレビュー
   ctx.textAlign = 'right';
-  ctx.fillStyle = '#3a6a8a';
+  ctx.fillStyle = 'rgba(190,230,255,0.85)';
   ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('Next', W - 40, 44);
+  ctx.fillText('NEXT', W - 40, 44);
+  ctx.shadowBlur = 0;
   const ndef = SLIMES[nextRank];
   const nx = W - 62, ny = 84, nr = Math.min(ndef.r, 26);
   const dummy = { blink:99, blinkPhase:0, wobble: performance.now()/300 };
@@ -1008,6 +1177,7 @@ function loop(now){
   }
 
   updateEffects(dt);
+  updateAmbient(dt);   // 深海の泡・マリンスノーは常時アニメ
   shakeAmt *= 0.85;
   if(shakeAmt < 0.3) shakeAmt = 0;
 
@@ -1098,6 +1268,10 @@ function hexToRgb(hex){
   const h = hex.replace('#','');
   return { r:parseInt(h.slice(0,2),16), g:parseInt(h.slice(2,4),16), b:parseInt(h.slice(4,6),16) };
 }
+function hexToRgba(hex, a){
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
 function lighten(hex, amt){
   const c = hexToRgb(hex);
   return `rgb(${Math.round(c.r+(255-c.r)*amt)},${Math.round(c.g+(255-c.g)*amt)},${Math.round(c.b+(255-c.b)*amt)})`;
@@ -1125,6 +1299,7 @@ function star(cx, cy, spikes, outer, inner){
 // =========================================================================
 fitStage();
 setupPhysics();
+initAmbient();
 requestAnimationFrame(loop);
 
 })();
