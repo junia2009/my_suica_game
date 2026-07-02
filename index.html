@@ -173,13 +173,6 @@
     transform: skewX(-12deg);
     animation: sheen 3.6s ease-in-out infinite;
   }
-  .hintRow { display: flex; gap: 10px; }
-  .chip {
-    font-size: 12px; letter-spacing: 1px;
-    color: #b9dcef; background: rgba(140,210,240,0.08);
-    border: 1px solid rgba(140,220,255,0.22); border-radius: 999px;
-    padding: 7px 16px;
-  }
   @keyframes floatY { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
   @keyframes pulseGlow {
     0%,100% { box-shadow: 0 6px 0 #2b86ad, 0 10px 26px rgba(60,190,240,0.4), 0 0 22px rgba(90,220,255,0.3); }
@@ -263,10 +256,6 @@
       <div id="titleBest" class="bestChip" hidden>BEST 0</div>
       <button id="startBtn" class="btn primary">スタート</button>
       <button id="dexBtnStart" class="btn sub">ずかん</button>
-      <div class="hintRow">
-        <span class="chip">スライドで ねらう</span>
-        <span class="chip">はなして 落とす</span>
-      </div>
     </div>
 
     <div id="overOverlay" class="overlay">
@@ -1302,6 +1291,14 @@ function drawBase(){
   // 上端の細い光ライン
   ctx.fillStyle = 'rgba(120,210,250,0.14)';
   ctx.fillRect(0, y0, W, 2);
+  // 操作ガイド（プレイ中は常時・音量ボタンの左の空きに控えめに）
+  if(state === 'playing'){
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillStyle = 'rgba(150,205,235,0.5)';
+    ctx.fillText('スライドで ねらう ・ はなして 落とす', 26, y0 + (H - y0)/2);
+  }
   ctx.restore();
 }
 
