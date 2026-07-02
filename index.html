@@ -35,6 +35,13 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
+    /* ノッチ/ステータスバー・ホームインジケータ等のセーフエリアを避ける */
+    padding:
+      env(safe-area-inset-top)
+      env(safe-area-inset-right)
+      env(safe-area-inset-bottom)
+      env(safe-area-inset-left);
   }
   #stage {
     position: relative;
@@ -164,11 +171,19 @@ const DEAD_TIME = 1.5;       // 超過継続でゲームオーバー(秒)
 const COOLDOWN = 420;        // 投下クールダウン(ms)
 const GAMEOVER_GRACE = 1200; // 開始直後の判定猶予(ms)
 
+// セーフエリアを除いた実際に使える領域（#app のコンテンツボックス）
+function getAvail(){
+  const app = document.getElementById('app');
+  const cs = getComputedStyle(app);
+  const w = app.clientWidth  - parseFloat(cs.paddingLeft || 0) - parseFloat(cs.paddingRight  || 0);
+  const h = app.clientHeight - parseFloat(cs.paddingTop  || 0) - parseFloat(cs.paddingBottom || 0);
+  return { w: Math.max(1, w), h: Math.max(1, h) };
+}
+
 function computeLogicalSize(){
-  const vw = Math.max(1, window.innerWidth);
-  const vh = Math.max(1, window.innerHeight);
-  // 画面の縦横比に合わせて H を決定（極端に細長く/短くならないようクランプ）
-  H = Math.round(Math.min(W*2.0, Math.max(W*1.35, W * (vh/vw))));
+  const a = getAvail();
+  // 安全領域の縦横比に合わせて H を決定（極端に細長く/短くならないようクランプ）
+  H = Math.round(Math.min(W*2.0, Math.max(W*1.35, W * (a.h / a.w))));
   FLOOR = H - BOTTOM_UI;     // 床を少し上げ、下部の帯に音量ボタンを置く
   DEAD_LINE = Math.round(H * 0.15);
 }
@@ -265,9 +280,10 @@ let overLineTime = 0;
 // -------------------------------------------------------------------------
 function fitStage(){
   const stage = document.getElementById('stage');
-  const pad = 16;
-  const availW = window.innerWidth - pad;
-  const availH = window.innerHeight - pad;
+  const a = getAvail();
+  const pad = 12;
+  const availW = a.w - pad;
+  const availH = a.h - pad;
   const scale = Math.min(availW / W, availH / H, 1.1);
   const cssW = Math.round(W * scale);
   const cssH = Math.round(H * scale);
