@@ -324,7 +324,7 @@ function computeLogicalSize(){
   // 安全領域の縦横比に合わせて H を決定（極端に細長く/短くならないようクランプ）
   H = Math.round(Math.min(W*1.75, Math.max(W*1.35, W * (a.h / a.w))));
   FLOOR = H - BOTTOM_UI;     // 床を少し上げ、下部の帯に音量ボタンを置く
-  DEAD_LINE = Math.round(H * 0.16);
+  DEAD_LINE = Math.round(H * 0.25);   // 上部にしんかのみち帯を確保しつつ盤面圧力を上げる
 }
 
 // 2つの16進色を線形補間して 'rgb()' を返す
@@ -441,6 +441,9 @@ let flash = 0;            // 発光フラッシュの強さ(0..1)
 let flashColor = '#ffffff';
 let flashX = W/2, flashY = H/2;
 let causticCanvas, causticCtx, causticImg; // コースティクス用オフスクリーン
+let evoCanvas = null;      // しんかのみち（進化順ストリップ）のキャッシュ
+let evoCacheKey = '';
+let evoPulse = { rank: 0, t: 0 };   // 新ランク到達時のパルス
 
 let state = 'ready';      // ready | playing | over
 let score = 0;
@@ -633,7 +636,7 @@ function makeSlime(rank, x, y, vx=0, vy=0){
   Body.setVelocity(body, { x:vx, y:vy });
   World.add(world, body);
   bodies.push(body);
-  if(rank > maxRankReached) maxRankReached = rank;
+  if(rank > maxRankReached){ maxRankReached = rank; evoPulse = { rank, t: 1 }; }
   discover(rank);   // 図鑑に登録
   return body;
 }
@@ -1907,9 +1910,93 @@ function drawEffects(){
   }
 }
 
+// ---- しんかのみち（デッドライン上の帯に進化順を常設表示） -----------------
+// スイカゲームの「シンカの輪」に相当。到達済みランクはカラー、
+// 未到達は暗いシルエット。新ランク到達でパルス、現在の投下ランクにリング。
+const EVO_RMIN = 7.5, EVO_RMAX = 17.5, EVO_GAP = 7, EVO_MARGIN_R = 30;
+const EVO_LOCAL_CY = 64;   // キャッシュ内のセンターy（王冠ぶんの上余白込み）
+function evoItems(){
+  const items = [];
+  const rs = [];
+  for(let i=1;i<=MAX_RANK;i++) rs.push(EVO_RMIN + (EVO_RMAX-EVO_RMIN)*(i-1)/(MAX_RANK-1));
+  const total = rs.reduce((a,b)=>a+2*b,0) + EVO_GAP*(MAX_RANK-1);
+  let x = W - EVO_MARGIN_R - total;
+  const y = Math.max(128, DEAD_LINE - 106);
+  for(let i=0;i<MAX_RANK;i++){
+    x += rs[i];
+    items.push({ rank:i+1, x, y, r:rs[i] });
+    x += rs[i] + EVO_GAP;
+  }
+  return items;
+}
+function buildEvoCanvas(items){
+  const dpr = 2, hCss = 110;
+  if(!evoCanvas) evoCanvas = document.createElement('canvas');
+  evoCanvas.width = W*dpr; evoCanvas.height = hCss*dpr;
+  const g = evoCanvas.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, hCss);
+  const prev = gfx; gfx = g;
+  const dummy = { blink:99, blinkPhase:0, wobble:0, squash:0, spawnPop:0 };
+  for(const it of items){
+    g.save();
+    if(it.rank > maxRankReached) g.globalAlpha = 0.34;
+    drawBlob(it.x, EVO_LOCAL_CY, it.r, SLIMES[it.rank], dummy, 0);
+    g.restore();
+    if(it.rank > maxRankReached){
+      // 未来のランクは深海色のシルエットに沈める
+      g.save();
+      g.fillStyle = 'rgba(6,26,44,0.5)';
+      g.beginPath(); g.arc(it.x, EVO_LOCAL_CY, it.r*1.06, 0, Math.PI*2); g.fill();
+      g.restore();
+    }
+  }
+  gfx = prev;
+  // キャプション
+  g.save();
+  g.font = 'bold 11px sans-serif';
+  g.textAlign = 'left';
+  g.fillStyle = 'rgba(150,210,240,0.65)';
+  g.fillText('しんかのみち', items[0].x - items[0].r, EVO_LOCAL_CY - 34);
+  g.restore();
+}
+function drawEvoStrip(){
+  const items = evoItems();
+  const key = maxRankReached + '|' + W + '|' + DEAD_LINE;
+  if(key !== evoCacheKey){ buildEvoCanvas(items); evoCacheKey = key; }
+  const yTop = items[0].y - EVO_LOCAL_CY;
+  ctx.drawImage(evoCanvas, 0, yTop, W, 110);
+
+  // 現在の投下ランクの位置にリング
+  if(state === 'playing' && current && !current.special){
+    const it = items[current.rank - 1];
+    const pulse = 0.75 + 0.25*Math.sin(performance.now()/220);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(140,230,255,' + (0.8*pulse) + ')';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(it.x, it.y, it.r + 4.5, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // 新ランク到達パルス：一回り大きく描き直し＋広がるリング
+  if(evoPulse.t > 0 && evoPulse.rank >= 1){
+    const it = items[evoPulse.rank - 1];
+    const t = evoPulse.t;
+    const dummy = { blink:99, blinkPhase:0, wobble:0, squash:0, spawnPop:0 };
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, t*2);
+    drawBlob(it.x, it.y, it.r*(1 + 0.5*t), SLIMES[evoPulse.rank], dummy, 0);
+    ctx.strokeStyle = 'rgba(160,240,255,' + (0.9*t) + ')';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(it.x, it.y, it.r*(1.4 + (1-t)*1.6), 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
 // ---- HUD (§3) ------------------------------------------------------------
 function drawHUD(){
   if(state === 'ready') return;   // タイトル画面ではHUDを出さない
+  drawEvoStrip();
   ctx.save();
   // 深海の暗背景でも読めるよう、明色＋淡いグロー
   ctx.shadowColor = 'rgba(10,40,70,0.9)';
@@ -1988,6 +2075,7 @@ function loop(now){
   updateDepth();       // 水深ゾーン（背景色・光量）
   flash *= 0.90;       // 発光フラッシュの減衰
   if(flash < 0.01) flash = 0;
+  if(evoPulse.t > 0) evoPulse.t = Math.max(0, evoPulse.t - dt*1.3);  // 到達パルス減衰
   shakeAmt *= 0.85;
   if(shakeAmt < 0.3) shakeAmt = 0;
 
