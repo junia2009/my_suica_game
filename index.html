@@ -844,7 +844,7 @@ function dropCurrent(){
   if(state !== 'playing' || !current || !canDrop) return;
   const r = itemRadius(current);
   const x = clampDropX(r);
-  const y = DEAD_LINE - 30;
+  const y = DEAD_LINE - 22;
   if(current.special) makeSpecial(current.special, x, y);
   else makeSlime(current.rank, x, y);
   SFX.drop();
@@ -1843,7 +1843,7 @@ function drawWings(cx, cy, r){
 function drawWaiting(){
   const r = itemRadius(current);
   const x = clampDropX(r);
-  const y = DEAD_LINE - 30;
+  const y = DEAD_LINE - 22;
   // ガイドライン
   ctx.save();
   ctx.strokeStyle = 'rgba(120,180,220,0.5)';
@@ -1913,18 +1913,18 @@ function drawEffects(){
 // ---- しんかのみち（デッドライン上の帯に進化順を常設表示） -----------------
 // スイカゲームの「シンカの輪」に相当。到達済みランクはカラー、
 // 未到達は暗いシルエット。新ランク到達でパルス、現在の投下ランクにリング。
-const EVO_RMIN = 7.5, EVO_RMAX = 17.5, EVO_GAP = 7, EVO_MARGIN_R = 30;
+const EVO_RMIN = 8, EVO_RMAX = 19, EVO_GAP = 7;
+const EVO_Y = 140;         // ヘッダーパネル3段目の固定y
 const EVO_LOCAL_CY = 64;   // キャッシュ内のセンターy（王冠ぶんの上余白込み）
 function evoItems(){
   const items = [];
   const rs = [];
   for(let i=1;i<=MAX_RANK;i++) rs.push(EVO_RMIN + (EVO_RMAX-EVO_RMIN)*(i-1)/(MAX_RANK-1));
   const total = rs.reduce((a,b)=>a+2*b,0) + EVO_GAP*(MAX_RANK-1);
-  let x = W - EVO_MARGIN_R - total;
-  const y = Math.max(128, DEAD_LINE - 106);
+  let x = (W - total) / 2;   // パネル内で中央寄せ
   for(let i=0;i<MAX_RANK;i++){
     x += rs[i];
-    items.push({ rank:i+1, x, y, r:rs[i] });
+    items.push({ rank:i+1, x, y: EVO_Y, r:rs[i] });
     x += rs[i] + EVO_GAP;
   }
   return items;
@@ -1952,17 +1952,10 @@ function buildEvoCanvas(items){
     }
   }
   gfx = prev;
-  // キャプション
-  g.save();
-  g.font = 'bold 11px sans-serif';
-  g.textAlign = 'left';
-  g.fillStyle = 'rgba(150,210,240,0.65)';
-  g.fillText('しんかのみち', items[0].x - items[0].r, EVO_LOCAL_CY - 34);
-  g.restore();
 }
 function drawEvoStrip(){
   const items = evoItems();
-  const key = maxRankReached + '|' + W + '|' + DEAD_LINE;
+  const key = maxRankReached + '|' + W;
   if(key !== evoCacheKey){ buildEvoCanvas(items); evoCacheKey = key; }
   const yTop = items[0].y - EVO_LOCAL_CY;
   ctx.drawImage(evoCanvas, 0, yTop, W, 110);
@@ -1994,52 +1987,79 @@ function drawEvoStrip(){
 }
 
 // ---- HUD (§3) ------------------------------------------------------------
+// 角丸長方形パス
+function pathRoundRect(c, x, y, w, h, r){
+  c.beginPath();
+  c.moveTo(x+r, y);
+  c.arcTo(x+w, y,   x+w, y+h, r);
+  c.arcTo(x+w, y+h, x,   y+h, r);
+  c.arcTo(x,   y+h, x,   y,   r);
+  c.arcTo(x,   y,   x+w, y,   r);
+  c.closePath();
+}
+
 function drawHUD(){
   if(state === 'ready') return;   // タイトル画面ではHUDを出さない
-  drawEvoStrip();
+
+  // 低い画面（PC横など）ではストリップ行を省いたコンパクト表示
+  const compact = DEAD_LINE < 220;
+  const panelBottom = compact ? 118 : 166;
+
+  // ---- ヘッダーパネル：背景の光芒から情報を分離する下地 ----
   ctx.save();
-  // 深海の暗背景でも読めるよう、明色＋淡いグロー
-  ctx.shadowColor = 'rgba(10,40,70,0.9)';
-  ctx.shadowBlur = 8;
-  // スコア
+  pathRoundRect(ctx, 10, 8, W-20, panelBottom-8, 16);
+  ctx.fillStyle = 'rgba(4,22,40,0.68)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(140,220,255,0.18)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(1,12,26,0.9)';
+  ctx.shadowBlur = 5;
+
+  // 1段目左：SCORE
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(190,230,255,0.85)';
-  ctx.font = 'bold 26px sans-serif';
-  ctx.fillText('SCORE', 40, 46);
-  ctx.fillStyle = '#f2fbff';
-  ctx.font = 'bold 42px sans-serif';
-  ctx.fillText(String(score), 40, 90);
+  ctx.fillStyle = 'rgba(170,225,255,0.92)';
+  ctx.font = 'bold 15px sans-serif';
+  ctx.fillText('SCORE', 30, 36);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 40px sans-serif';
+  ctx.fillText(String(score), 30, 78);
 
-  ctx.font = 'bold 16px sans-serif';
-  ctx.fillStyle = 'rgba(150,200,230,0.75)';
-  ctx.fillText('BEST ' + bestScore, 42, 112);
+  // 2段目左：BEST と 水深・ゾーン
+  ctx.font = 'bold 13px sans-serif';
+  ctx.fillStyle = 'rgba(160,210,240,0.85)';
+  ctx.fillText('BEST ' + bestScore, 30, 102);
+  ctx.fillStyle = 'rgba(140,225,255,0.95)';
+  ctx.fillText('▼ ' + depthM + ' m ・ ' + zoneName, 30, 121);
 
-  // 水深とゾーン名
-  ctx.fillStyle = 'rgba(140,225,255,0.92)';
-  ctx.font = 'bold 17px sans-serif';
-  ctx.fillText('▼ ' + depthM + ' m', 42, 136);
-  ctx.fillStyle = 'rgba(150,205,235,0.7)';
-  ctx.font = 'bold 12px sans-serif';
-  ctx.fillText(zoneName, 42, 154);
-
-  // Next プレビュー
-  ctx.textAlign = 'right';
-  ctx.fillStyle = 'rgba(190,230,255,0.85)';
-  ctx.font = 'bold 22px sans-serif';
-  ctx.fillText('NEXT', W - 40, 44);
+  // 1段目右：NEXT（丸い窓）
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(170,225,255,0.92)';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.fillText('NEXT', W - 64, 34);
   ctx.shadowBlur = 0;
+  ctx.beginPath(); ctx.arc(W - 64, 78, 31, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(150,220,255,0.07)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(140,220,255,0.28)'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.restore();
+
+  // NEXT のスライム
   const nrExact = itemRadius(nextItem);
-  const nx = W - 62, ny = 84, nr = Math.min(nrExact, 26);
+  const nr = Math.min(nrExact, 22);
   const dummy = { blink:99, blinkPhase:0, wobble: performance.now()/300 };
   ctx.save();
-  ctx.translate(nx, ny);
+  ctx.translate(W - 64, 80);
   const sc = nr / nrExact;
   ctx.scale(sc, sc);
   if(nextItem.special) drawSpecialBlob(0, 0, nrExact, nextItem.special, dummy);
   else drawBlob(0, 0, nrExact, SLIMES[nextItem.rank], dummy, 0);
   ctx.restore();
 
-  ctx.restore();
+  // 3段目：しんかのみち
+  if(!compact) drawEvoStrip();
 }
 
 // =========================================================================
