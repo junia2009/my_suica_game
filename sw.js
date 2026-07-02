@@ -1,5 +1,5 @@
 /* スライム合成パズル — Service Worker (オフライン対応) */
-const CACHE = 'slime-deep-sea-v3';
+const CACHE = 'slime-deep-sea-v4';
 const ASSETS = [
   './',
   './index.html',
