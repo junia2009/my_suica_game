@@ -94,6 +94,43 @@
     transition: transform 0.08s ease, box-shadow 0.08s ease;
   }
   .btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #2b86ad, 0 5px 12px rgba(60,190,240,0.35); }
+  /* サブボタン（ずかん等）：控えめなアウトライン */
+  .btn.sub {
+    padding: 10px 30px;
+    font-size: 17px;
+    color: #cdeffff2;
+    background: rgba(140,210,240,0.10);
+    border: 1.5px solid rgba(140,220,255,0.5);
+    box-shadow: 0 0 16px rgba(90,220,255,0.18);
+  }
+  .btn.sub:active { transform: translateY(2px); box-shadow: none; }
+
+  /* 図鑑 */
+  #dexProgress { font-size: 16px; opacity: 0.9; letter-spacing: 1px; }
+  #dexGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    width: min(92%, 430px);
+    max-height: 58vh;
+    overflow-y: auto;
+    padding: 6px 4px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .dexCell {
+    background: rgba(140,210,240,0.08);
+    border: 1px solid rgba(140,220,255,0.18);
+    border-radius: 14px;
+    padding: 8px 5px 9px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .dexCell.locked { opacity: 0.7; }
+  .dexCell canvas { width: 66px; height: 66px; }
+  .dexCell .nm { font-size: 12.5px; font-weight: 700; color: #eaf6ff; }
+  .dexCell .ds { font-size: 10px; opacity: 0.72; line-height: 1.3; min-height: 26px; text-align: center; }
   .stat-card {
     background: rgba(140,210,240,0.10);
     border: 1px solid rgba(140,220,255,0.30);
@@ -131,6 +168,7 @@
       <h1>スライム合成パズル</h1>
       <p>同じスライムをぶつけて<br>合体させ、スライムキングを目指そう！</p>
       <button id="startBtn" class="btn">スタート</button>
+      <button id="dexBtnStart" class="btn sub">ずかん</button>
       <p style="font-size:15px;opacity:0.85">クリック / タップで落とす・左右で移動</p>
     </div>
 
@@ -140,8 +178,17 @@
         <p>スコア <span id="finalScore" class="big">0</span></p>
         <p>ハイスコア <span id="finalBest" class="big">0</span></p>
         <p>到達スライム <span id="finalMax" class="big">-</span></p>
+        <p>さいだい水深 <span id="finalDepth" class="big">0</span> m</p>
       </div>
       <button id="retryBtn" class="btn">もう一回</button>
+      <button id="dexBtnOver" class="btn sub">ずかん</button>
+    </div>
+
+    <div id="dexOverlay" class="overlay">
+      <h1 style="font-size:30px;">ずかん</h1>
+      <div id="dexProgress"></div>
+      <div id="dexGrid"></div>
+      <button id="dexClose" class="btn">とじる</button>
     </div>
   </div>
 </div>
@@ -188,24 +235,57 @@ function computeLogicalSize(){
   DEAD_LINE = Math.round(H * 0.15);
 }
 
+// 2つの16進色を線形補間して 'rgb()' を返す
+function lerpHex(h1, h2, t){
+  const c1 = hexToRgb(h1), c2 = hexToRgb(h2);
+  return `rgb(${Math.round(c1.r+(c2.r-c1.r)*t)},${Math.round(c1.g+(c2.g-c1.g)*t)},${Math.round(c1.b+(c2.b-c1.b)*t)})`;
+}
+
+// スコアから水深とゾーン（背景色・光量）を求める
+function updateDepth(){
+  depthM = Math.max(0, Math.floor(score * DEPTH_PER_SCORE));
+  let i = 0;
+  while(i < ZONES.length-1 && depthM >= ZONES[i+1].depth) i++;
+  const a = ZONES[i], b = ZONES[Math.min(i+1, ZONES.length-1)];
+  const span = (b.depth - a.depth) || 1;
+  const t = Math.max(0, Math.min(1, (depthM - a.depth) / span));
+  envCol.top = lerpHex(a.top, b.top, t);
+  envCol.mid = lerpHex(a.mid, b.mid, t);
+  envCol.bot = lerpHex(a.bot, b.bot, t);
+  envCol.ray = a.ray + (b.ray - a.ray) * t;
+  envCol.surf = a.surf + (b.surf - a.surf) * t;
+  zoneName = a.name;
+}
+
 // ---- スライム定義 (§2) --------------------------------------------------
 // score は三角数ベース n(n+1)/2
 const SLIMES = [
   null, // index 0 未使用（rank=1始まり）
-  { rank:1,  name:'しずく',        r:20,  color:'#7ec8e3', score:1  },
-  { rank:2,  name:'こつぶ',        r:28,  color:'#a8d84f', score:3  },
-  { rank:3,  name:'ぷにまる',      r:38,  color:'#5fbf5f', score:6  },
-  { rank:4,  name:'あおスラ',      r:46,  color:'#4a7fd6', score:10 },
-  { rank:5,  name:'むらさき',      r:56,  color:'#9b6fd6', score:15 },
-  { rank:6,  name:'ももスラ',      r:68,  color:'#f28ab2', score:21 },
-  { rank:7,  name:'きんスラ',      r:80,  color:'#f2c14e', score:28 },
-  { rank:8,  name:'にじスラ',      r:96,  color:'#7fd6c8', score:36, rainbow:true },
-  { rank:9,  name:'ほしスラ',      r:112, color:'#2e2b6b', score:45 },
-  { rank:10, name:'おおスラ',      r:128, color:'#f0f0f5', score:55 },
-  { rank:11, name:'スライムキング', r:148, color:'#c8b0ff', score:66, metal:true },
+  { rank:1,  name:'しずく',        r:20,  color:'#7ec8e3', score:1,  desc:'海面から落ちてきた小さな雫。すべての始まり。' },
+  { rank:2,  name:'こつぶ',        r:28,  color:'#a8d84f', score:3,  desc:'ふたつ寄り添って生まれた粒。ぷるぷる元気。' },
+  { rank:3,  name:'ぷにまる',      r:38,  color:'#5fbf5f', score:6,  desc:'ほっぺが自慢のまんまるスライム。' },
+  { rank:4,  name:'あおスラ',      r:46,  color:'#4a7fd6', score:10, desc:'深い青をまとった、少し大人なスライム。' },
+  { rank:5,  name:'むらさき',      r:56,  color:'#9b6fd6', score:15, desc:'ツノが生えはじめた証。ちょっと得意げ。' },
+  { rank:6,  name:'ももスラ',      r:68,  color:'#f28ab2', score:21, desc:'桃色のやわらか個体。深海のアイドル。' },
+  { rank:7,  name:'きんスラ',      r:80,  color:'#f2c14e', score:28, desc:'王冠を戴く金色のスライム。風格が出てきた。' },
+  { rank:8,  name:'にじスラ',      r:96,  color:'#7fd6c8', score:36, rainbow:true, desc:'虹色に輝き、羽まで生えた幻の個体。' },
+  { rank:9,  name:'ほしスラ',      r:112, color:'#2e2b6b', score:45, desc:'夜空を宿したような星柄。深層の主。' },
+  { rank:10, name:'おおスラ',      r:128, color:'#f0f0f5', score:55, desc:'もこもこの雲をまとう巨大スライム。' },
+  { rank:11, name:'スライムキング', r:148, color:'#c8b0ff', score:66, metal:true, desc:'マントを翻す深海の王。到達できれば真の達人。' },
 ];
 const MAX_RANK = 11;
 const DROPPABLE_MAX = 5; // 投下候補は rank1〜5
+
+// ---- 深度ゾーン（進行演出） --------------------------------------------
+// スコアが上がるほど深く潜り、背景色・光芒・水面光が段階的に変化する。
+const DEPTH_PER_SCORE = 1.0;   // スコア1につき何m潜るか
+const ZONES = [
+  { name:'サンライトゾーン',   depth:0,    top:'#0e4a72', mid:'#0a3557', bot:'#03152a', ray:1.00, surf:0.28 },
+  { name:'トワイライトゾーン', depth:200,  top:'#083a5e', mid:'#05263f', bot:'#02101f', ray:0.55, surf:0.16 },
+  { name:'ミッドナイトゾーン', depth:500,  top:'#04233c', mid:'#031828', bot:'#010a15', ray:0.22, surf:0.07 },
+  { name:'アビサルゾーン',     depth:1000, top:'#02182b', mid:'#02101c', bot:'#01060f', ray:0.06, surf:0.03 },
+  { name:'ヘイダルゾーン',     depth:2000, top:'#010f1e', mid:'#010912', bot:'#000509', ray:0.00, surf:0.00 },
+];
 
 // =========================================================================
 //  オーディオ（WebAudio 簡易効果音）
@@ -240,6 +320,7 @@ const SFX = (() => {
 // =========================================================================
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+let gfx = ctx;   // スライム描画の出力先。図鑑サムネ描画時だけ一時的に差し替える。
 
 let engine, world;
 let bodies = [];          // slime bodies (Matterのbody, .plugin.slimeにメタ)
@@ -260,6 +341,21 @@ let state = 'ready';      // ready | playing | over
 let score = 0;
 let bestScore = +(localStorage.getItem('slime_best') || 0);
 let maxRankReached = 1;
+
+// 深度（進行演出）：現在のゾーン色などを保持
+let depthM = 0;
+let zoneName = ZONES[0].name;
+const envCol = { top: ZONES[0].top, mid: ZONES[0].mid, bot: ZONES[0].bot, ray: ZONES[0].ray, surf: ZONES[0].surf };
+
+// 図鑑：これまで出現させた rank（localStorage永続）
+let discovered = new Set();
+try { discovered = new Set(JSON.parse(localStorage.getItem('slime_dex') || '[]')); } catch(_) {}
+function discover(rank){
+  if(!discovered.has(rank)){
+    discovered.add(rank);
+    localStorage.setItem('slime_dex', JSON.stringify([...discovered]));
+  }
+}
 
 let current = null;       // 待機スライムのメタ {rank, x}
 let nextRank = 1;         // nextプレビュー
@@ -358,6 +454,7 @@ function makeSlime(rank, x, y, vx=0, vy=0){
   World.add(world, body);
   bodies.push(body);
   if(rank > maxRankReached) maxRankReached = rank;
+  discover(rank);   // 図鑑に登録
   return body;
 }
 
@@ -526,6 +623,7 @@ function gameOver(){
   document.getElementById('finalScore').textContent = score;
   document.getElementById('finalBest').textContent = bestScore;
   document.getElementById('finalMax').textContent = SLIMES[maxRankReached].name;
+  document.getElementById('finalDepth').textContent = depthM;
   document.getElementById('overOverlay').classList.add('show');
 }
 
@@ -631,7 +729,8 @@ function initCaustics(){
   causticCtx = causticCanvas.getContext('2d');
   causticImg = causticCtx.createImageData(CW, CH);
 }
-function drawCaustics(t){
+function drawCaustics(t, intensity){
+  const k = intensity === undefined ? 1 : intensity;
   const tt = t*0.0011;
   const d = causticImg.data;
   let i = 0;
@@ -653,7 +752,7 @@ function drawCaustics(t){
   causticCtx.putImageData(causticImg, 0, 0);
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.55;
+  ctx.globalAlpha = 0.55 * k;
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(causticCanvas, WALL, 0, W - WALL*2, H);
   ctx.restore();
@@ -797,8 +896,10 @@ function drawMotes(){
   }
   ctx.restore();
 }
-// 上から差し込む光芒（ゴッドレイ）
-function drawGodrays(t){
+// 上から差し込む光芒（ゴッドレイ）。intensity(0..1)で深度に応じ減衰。
+function drawGodrays(t, intensity){
+  const k = intensity === undefined ? 1 : intensity;
+  if(k <= 0.01) return;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   const rays = 5;
@@ -808,8 +909,8 @@ function drawGodrays(t){
     const halfW = 34 + i*16;
     const drift = 150;                       // 下に行くほど左へ流れる角度
     const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0,   'rgba(150,225,255,0.12)');
-    g.addColorStop(0.45,'rgba(120,205,240,0.05)');
+    g.addColorStop(0,   'rgba(150,225,255,'+(0.12*k)+')');
+    g.addColorStop(0.45,'rgba(120,205,240,'+(0.05*k)+')');
     g.addColorStop(1,   'rgba(120,205,240,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -862,30 +963,31 @@ function draw(){
 function drawBackground(){
   const t = performance.now();
 
-  // 深海の縦グラデ（水面付近は明るく、深部は闇へ）
+  // 深海の縦グラデ（水深ゾーンで色が変化）
   const g = ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,   '#0e4a72');
-  g.addColorStop(0.35,'#0a3557');
-  g.addColorStop(0.7, '#062339');
-  g.addColorStop(1,   '#03152a');
+  g.addColorStop(0,    envCol.top);
+  g.addColorStop(0.55, envCol.mid);
+  g.addColorStop(1,    envCol.bot);
   ctx.fillStyle = g;
   ctx.fillRect(0,0,W,H);
 
-  // 水面からの光（上部を明るく）
-  const surf = ctx.createLinearGradient(0,0,0,H*0.45);
-  surf.addColorStop(0,'rgba(130,215,245,0.28)');
-  surf.addColorStop(1,'rgba(130,215,245,0)');
-  ctx.fillStyle = surf;
-  ctx.fillRect(0,0,W,H*0.45);
+  // 水面からの光（深くなるほど弱まる）
+  if(envCol.surf > 0.002){
+    const surf = ctx.createLinearGradient(0,0,0,H*0.45);
+    surf.addColorStop(0,'rgba(130,215,245,'+envCol.surf+')');
+    surf.addColorStop(1,'rgba(130,215,245,0)');
+    ctx.fillStyle = surf;
+    ctx.fillRect(0,0,W,H*0.45);
+  }
 
   // 遠景シルエット（海藻・魚影）— 光より奥
   drawScenery();
 
-  // ゴッドレイ
-  drawGodrays(t);
+  // ゴッドレイ（深くなるほど弱まる）
+  drawGodrays(t, envCol.ray);
 
-  // コースティクス（揺らぐ網目光）
-  drawCaustics(t);
+  // コースティクス（揺らぐ網目光・深度で減衰）
+  drawCaustics(t, Math.max(0.15, envCol.ray));
 
   // 背景の泡・マリンスノー
   for(const b of bubbles) if(!b.front) drawBubble(b);
@@ -1023,6 +1125,7 @@ function drawSlime(b){
 
 // スライム描画：本体（真球シェーディング）＋ 顔/アクセサリ（body.angle で回転）
 function drawBlob(cx, cy, r, def, s, angle=0){
+  const ctx = gfx;
   drawSlimeBody(cx, cy, r, def);
   ctx.save();
   ctx.translate(cx, cy);
@@ -1035,6 +1138,7 @@ function drawBlob(cx, cy, r, def, s, angle=0){
 
 // 真球に見せる立体シェーディング（光源は常に左上・複数レイヤーで陰影を重ねる）
 function drawSlimeBody(cx, cy, r, def){
+  const ctx = gfx;
   // 生物発光グロー（深海）：本体の色で淡いハローを add 合成。上位ほど強く光る
   const glowCol = def.rainbow ? '#7fe6ff' : (def.metal ? '#d0b8ff' : def.color);
   const glowStr = 0.22 + Math.min(def.rank, 11)*0.02;
@@ -1168,6 +1272,7 @@ function drawSlimeBody(cx, cy, r, def){
 
 // ---- 顔の描き分け (§10, §14: ここが肝) -----------------------------------
 function drawFace(cx, cy, r, def, s){
+  const ctx = gfx;
   const rank = def.rank;
   // まばたき
   s.blink -= 1/60;
@@ -1255,6 +1360,7 @@ function drawFace(cx, cy, r, def, s){
 
 // ---- アクセサリ (§2) -----------------------------------------------------
 function drawAccessory(cx, cy, r, def){
+  const ctx = gfx;
   const rank = def.rank;
   ctx.save();
   // ツノ1本 (rank5,6)
@@ -1293,6 +1399,7 @@ function drawAccessory(cx, cy, r, def){
 }
 
 function drawCrown(cx, cy, w){
+  const ctx = gfx;
   ctx.save();
   ctx.fillStyle = '#ffd54a';
   ctx.strokeStyle = '#e0a800';
@@ -1314,6 +1421,7 @@ function drawCrown(cx, cy, w){
 }
 
 function drawWings(cx, cy, r){
+  const ctx = gfx;
   ctx.save();
   ctx.fillStyle = 'rgba(255,255,255,0.9)';
   ctx.strokeStyle = 'rgba(180,200,255,0.9)';
@@ -1419,6 +1527,14 @@ function drawHUD(){
   ctx.fillStyle = 'rgba(150,200,230,0.75)';
   ctx.fillText('BEST ' + bestScore, 42, 112);
 
+  // 水深とゾーン名
+  ctx.fillStyle = 'rgba(140,225,255,0.92)';
+  ctx.font = 'bold 17px sans-serif';
+  ctx.fillText('▼ ' + depthM + ' m', 42, 136);
+  ctx.fillStyle = 'rgba(150,205,235,0.7)';
+  ctx.font = 'bold 12px sans-serif';
+  ctx.fillText(zoneName, 42, 154);
+
   // Next プレビュー
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(190,230,255,0.85)';
@@ -1466,6 +1582,7 @@ function loop(now){
   updateEffects(dt);
   updateAmbient(dt);   // 深海の泡・マリンスノーは常時アニメ
   updateScenery(dt);   // 海藻・魚影
+  updateDepth();       // 水深ゾーン（背景色・光量）
   flash *= 0.90;       // 発光フラッシュの減衰
   if(flash < 0.01) flash = 0;
   shakeAmt *= 0.85;
@@ -1551,6 +1668,60 @@ document.getElementById('mute').addEventListener('click', (e) => {
   e.currentTarget.textContent = m ? '🔇' : '🔊';
 });
 
+// -------------------------------------------------------------------------
+//  図鑑（コレクション）
+// -------------------------------------------------------------------------
+function drawDexThumb(g, size, def, known){
+  if(!known){
+    g.save();
+    g.fillStyle = 'rgba(120,160,190,0.16)';
+    g.beginPath(); g.arc(size/2, size*0.54, size*0.3, 0, Math.PI*2); g.fill();
+    g.fillStyle = 'rgba(200,230,255,0.5)';
+    g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('?', size/2, size*0.56);
+    g.restore();
+    return;
+  }
+  // 既存のスライム描画を流用（出力先を一時的に g に差し替え）
+  const prev = gfx;
+  gfx = g;
+  const dummy = { blink:99, blinkPhase:0, wobble:0, squash:0, spawnPop:0 };
+  drawBlob(size/2, size*0.56, size*0.3, def, dummy, 0);
+  gfx = prev;
+}
+
+function buildDex(){
+  const grid = document.getElementById('dexGrid');
+  grid.innerHTML = '';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const size = 66;
+  for(let rank=1; rank<=MAX_RANK; rank++){
+    const def = SLIMES[rank];
+    const known = discovered.has(rank);
+    const cell = document.createElement('div');
+    cell.className = 'dexCell' + (known ? '' : ' locked');
+    const cv = document.createElement('canvas');
+    cv.width = size*dpr; cv.height = size*dpr;
+    cv.style.width = size+'px'; cv.style.height = size+'px';
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawDexThumb(g, size, def, known);
+    const nm = document.createElement('div'); nm.className = 'nm';
+    nm.textContent = known ? def.name : '???';
+    const ds = document.createElement('div'); ds.className = 'ds';
+    ds.textContent = known ? def.desc : 'みはっけん';
+    cell.appendChild(cv); cell.appendChild(nm); cell.appendChild(ds);
+    grid.appendChild(cell);
+  }
+  document.getElementById('dexProgress').textContent = 'はっけん ' + discovered.size + ' / ' + MAX_RANK;
+}
+
+function openDex(){ buildDex(); document.getElementById('dexOverlay').classList.add('show'); }
+function closeDex(){ document.getElementById('dexOverlay').classList.remove('show'); }
+document.getElementById('dexBtnStart').addEventListener('click', openDex);
+document.getElementById('dexBtnOver').addEventListener('click', openDex);
+document.getElementById('dexClose').addEventListener('click', closeDex);
+
 // =========================================================================
 //  カラーユーティリティ
 // =========================================================================
@@ -1572,6 +1743,7 @@ function darken(hex, amt){
   return `rgb(${Math.round(c.r*(1-amt))},${Math.round(c.g*(1-amt))},${Math.round(c.b*(1-amt))})`;
 }
 function star(cx, cy, spikes, outer, inner){
+  const ctx = gfx;
   let rot = -Math.PI/2;
   const step = Math.PI/spikes;
   ctx.beginPath();
