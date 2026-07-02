@@ -156,7 +156,9 @@ const { Engine, World, Bodies, Body, Composite, Events } = Matter;
 // 縦長スマホで上下に大きな余白（デッドゾーン）が出ないようにする。
 const W = 560;               // 横幅（従来640から縮小）
 const WALL = 14;             // 壁を薄くして端ギリギリまで置けるように
+const BOTTOM_UI = 88;        // 底の下に確保する帯（音量ボタン用の台座）
 let H = 940;                 // computeLogicalSize() で画面比から上書き
+let FLOOR = H - BOTTOM_UI;   // 水槽の床の y（この上でスライムが積まれる）
 let DEAD_LINE = 150;         // デッドライン y（Hに比例、同上）
 const DEAD_TIME = 1.5;       // 超過継続でゲームオーバー(秒)
 const COOLDOWN = 420;        // 投下クールダウン(ms)
@@ -167,6 +169,7 @@ function computeLogicalSize(){
   const vh = Math.max(1, window.innerHeight);
   // 画面の縦横比に合わせて H を決定（極端に細長く/短くならないようクランプ）
   H = Math.round(Math.min(W*2.0, Math.max(W*1.35, W * (vh/vw))));
+  FLOOR = H - BOTTOM_UI;     // 床を少し上げ、下部の帯に音量ボタンを置く
   DEAD_LINE = Math.round(H * 0.15);
 }
 
@@ -277,6 +280,19 @@ function fitStage(){
   canvas.style.width = cssW + 'px';
   canvas.style.height = cssH + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // 音量ボタンを底の下の台座帯（キャンバスは拡縮するがボタンは固定CSSサイズ）
+  // の中に必ず収まるよう、スケールに応じてサイズ・位置を合わせる。
+  const muteBtn = document.getElementById('mute');
+  if(muteBtn){
+    const baseCss = (BOTTOM_UI - WALL) * scale;         // 台座帯のCSS高さ
+    const bs = Math.max(26, Math.min(44, baseCss * 0.74));
+    muteBtn.style.width = bs + 'px';
+    muteBtn.style.height = bs + 'px';
+    muteBtn.style.bottom = Math.max(4, (baseCss - bs) / 2) + 'px';
+    muteBtn.style.right = Math.max(8, baseCss * 0.28) + 'px';
+    muteBtn.style.fontSize = (bs * 0.48) + 'px';
+  }
 }
 window.addEventListener('resize', fitStage);
 
@@ -290,7 +306,7 @@ function setupPhysics(){
 
   const wallOpt = { isStatic:true, restitution:0.1, friction:0.5, label:'wall' };
   World.add(world, [
-    Bodies.rectangle(W/2, H + WALL/2, W + WALL*2, WALL*2, wallOpt),           // 底
+    Bodies.rectangle(W/2, FLOOR + WALL, W + WALL*2, WALL*2, wallOpt),          // 底（上面がFLOOR）
     Bodies.rectangle(-WALL/2, H/2, WALL, H*2, wallOpt),                        // 左
     Bodies.rectangle(W + WALL/2, H/2, WALL, H*2, wallOpt),                     // 右
   ]);
@@ -670,7 +686,7 @@ function drawScenery(){
   // 海藻（底から生えて揺れる暗いシルエット）
   ctx.fillStyle = 'rgba(2,16,28,0.55)';
   for(const s of seaweeds){
-    const rootY = H - WALL;
+    const rootY = FLOOR;
     const segs = 8;
     ctx.beginPath();
     // 左の縁：根元→先端
@@ -862,28 +878,46 @@ function drawBackground(){
   // ガラスの箱（側面・底）
   drawWalls();
 
+  // 底より下の台座（音量ボタンを置く帯）
+  drawBase();
+
   // デッドライン（発光する点線）
   drawDeadline(t);
 }
 
 function drawWalls(){
   ctx.save();
-  // 側面・底のガラス（うっすら暗い）
+  // 側面・底のガラス（うっすら暗い）— 床(FLOOR)までの高さで描く
   ctx.fillStyle = 'rgba(6,26,44,0.35)';
-  ctx.fillRect(0, 0, WALL, H);
-  ctx.fillRect(W-WALL, 0, WALL, H);
-  ctx.fillRect(0, H-WALL, W, WALL);
+  ctx.fillRect(0, 0, WALL, FLOOR);
+  ctx.fillRect(W-WALL, 0, WALL, FLOOR);
+  ctx.fillRect(0, FLOOR, W, WALL);
   // 内側の発光エッジ
   ctx.fillStyle = 'rgba(130,220,255,0.22)';
-  ctx.fillRect(WALL-2, 0, 2, H);
-  ctx.fillRect(W-WALL, 0, 2, H);
-  ctx.fillRect(0, H-WALL, W, 2);
-  // 底のやわらかい光
-  const fg = ctx.createLinearGradient(0, H-WALL-46, 0, H-WALL);
+  ctx.fillRect(WALL-2, 0, 2, FLOOR);
+  ctx.fillRect(W-WALL, 0, 2, FLOOR);
+  ctx.fillRect(0, FLOOR, W, 2);
+  // 床のやわらかい光
+  const fg = ctx.createLinearGradient(0, FLOOR-46, 0, FLOOR);
   fg.addColorStop(0,'rgba(80,190,225,0)');
   fg.addColorStop(1,'rgba(80,190,225,0.12)');
   ctx.fillStyle = fg;
-  ctx.fillRect(0, H-WALL-46, W, 46);
+  ctx.fillRect(0, FLOOR-46, W, 46);
+  ctx.restore();
+}
+
+// 床の下の台座帯（ここに音量ボタンが乗る）
+function drawBase(){
+  ctx.save();
+  const y0 = FLOOR + WALL;
+  const g = ctx.createLinearGradient(0, y0, 0, H);
+  g.addColorStop(0, '#05192c');
+  g.addColorStop(1, '#010a18');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, y0, W, H - y0);
+  // 上端の細い光ライン
+  ctx.fillStyle = 'rgba(120,210,250,0.14)';
+  ctx.fillRect(0, y0, W, 2);
   ctx.restore();
 }
 
@@ -1292,7 +1326,7 @@ function drawWaiting(){
   ctx.setLineDash([6,8]);
   ctx.beginPath();
   ctx.moveTo(x, y + def.r);
-  ctx.lineTo(x, H - WALL);
+  ctx.lineTo(x, FLOOR);
   ctx.stroke();
   ctx.restore();
 
