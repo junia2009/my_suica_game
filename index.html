@@ -287,6 +287,16 @@ const ZONES = [
   { name:'ヘイダルゾーン',     depth:2000, top:'#010f1e', mid:'#010912', bot:'#000509', ray:0.00, surf:0.00 },
 ];
 
+// ---- 特殊スライム（能力持ち・レア出現） --------------------------------
+const SPECIALS = {
+  bomb: { name:'ボムスライム', r:32, color:'#3b4250', glow:'#ff6a3c',
+          desc:'ぶつかると爆発し、まわりのスライムを消し飛ばす危険な個体。' },
+  wild: { name:'ワイルドスライム', r:30, color:'#8fd0ff', rainbow:true,
+          desc:'どんなスライムとも合体できる万能個体。1つ上へ進化させる。' },
+};
+const SPECIAL_KINDS = ['bomb', 'wild'];
+const SPECIAL_CHANCE = 0.07;   // 次の投下が特殊になる確率
+
 // =========================================================================
 //  オーディオ（WebAudio 簡易効果音）
 // =========================================================================
@@ -312,6 +322,7 @@ const SFX = (() => {
     over(){ [400,300,220,160].forEach((f,i)=>setTimeout(()=>tone(f,0.3,'sawtooth',0.2),i*120)); },
     tideWarn(){ tone(150, 0.5, 'sine', 0.10, 260); },                 // 海流の予告
     tide(){ tone(90, 1.2, 'sawtooth', 0.10, 200); tone(70, 1.2, 'sine', 0.06, 150); }, // 海流の到来（ゴーッ）
+    boom(){ tone(130, 0.4, 'sawtooth', 0.26, 40); setTimeout(()=>tone(80,0.3,'square',0.18,30),25); }, // 爆発
     toggle(){ muted = !muted; return muted; },
     resume,
   };
@@ -359,8 +370,8 @@ function discover(rank){
   }
 }
 
-let current = null;       // 待機スライムのメタ {rank, x}
-let nextRank = 1;         // nextプレビュー
+let current = null;       // 待機アイテム {rank} または {special}
+let nextItem = { rank: 1 };  // next プレビュー {rank} または {special}
 let pointerX = W/2;
 let canDrop = true;
 let dropCooldownUntil = 0;
@@ -510,6 +521,8 @@ function makeSlime(rank, x, y, vx=0, vy=0){
   });
   body.plugin.slime = {
     rank,
+    r: def.r,
+    special: null,
     merged: false,
     // 描画用アニメ状態
     squash: 0,          // >0で縦に潰れる
@@ -528,67 +541,70 @@ function makeSlime(rank, x, y, vx=0, vy=0){
   return body;
 }
 
+// 特殊スライム（能力持ち）を生成
+function makeSpecial(kind, x, y){
+  const sp = SPECIALS[kind];
+  const body = Bodies.circle(x, y, sp.r, {
+    restitution: 0.15, friction: 0.3, frictionStatic: 0.5, density: 0.001, label: 'slime',
+  });
+  body.plugin.slime = {
+    rank: 0, r: sp.r, special: kind, merged: false,
+    squash: 0, spawnPop: 1, blink: Math.random()*4 + 2, blinkPhase: 0,
+    face: Math.floor(Math.random()*1000), wobble: Math.random()*Math.PI*2, prevY: y,
+  };
+  World.add(world, body);
+  bodies.push(body);
+  discover(kind);
+  return body;
+}
+
+// 表示用のラジアス／色を得るヘルパ
+function metaColor(s){ return s.special ? (SPECIALS[s.special].glow || SPECIALS[s.special].color) : SLIMES[s.rank].color; }
+
 // -------------------------------------------------------------------------
 //  合体ロジック (§7)
 // -------------------------------------------------------------------------
+function midpoint(a, b){ return { x:(a.position.x+b.position.x)/2, y:(a.position.y+b.position.y)/2 }; }
+
 function onCollision(ev){
   for(const pair of ev.pairs){
     const a = pair.bodyA, b = pair.bodyB;
     if(a.label !== 'slime' || b.label !== 'slime') continue;
     const sa = a.plugin.slime, sb = b.plugin.slime;
     if(!sa || !sb) continue;
-    if(sa.rank !== sb.rank) continue;
     if(sa.merged || sb.merged) continue;   // 二重合体防止
 
-    // フラグ即時セット → 除去 の順
-    sa.merged = true;
-    sb.merged = true;
+    const aBomb = sa.special === 'bomb', bBomb = sb.special === 'bomb';
+    const aWild = sa.special === 'wild', bWild = sb.special === 'wild';
 
-    const rank = sa.rank;
-
-    // スライムキング同士 → 消して大ボーナス (§7 / §14)
-    if(rank === MAX_RANK){
-      removeBody(a); removeBody(b);
-      const mid = { x:(a.position.x+b.position.x)/2, y:(a.position.y+b.position.y)/2 };
-      const bonus = 999;
-      addScore(bonus, mid.x, mid.y, true);
-      burst(mid.x, mid.y, '#ffe08a', 40);
-      rings.push({ x:mid.x, y:mid.y, r:10, max:260, life:1, color:'#fff2b0' });
-      spawnBubbles(mid.x, mid.y, 34, 90);           // 泡が大量に弾ける
-      triggerFlash('#fff2b0', 0.95, mid.x, mid.y);  // 画面全体が発光
-      SFX.king();
-      shake(16);
+    // ボム：スライムに触れたら爆発（相手の種類は問わない）
+    if(aBomb || bBomb){
+      const bombBody = aBomb ? a : b;
+      bombBody.plugin.slime.merged = true;
+      detonate(bombBody);
       continue;
     }
 
-    const mid = { x:(a.position.x+b.position.x)/2, y:(a.position.y+b.position.y)/2 };
-    removeBody(a); removeBody(b);
-
-    const newRank = rank + 1;
-    const nb = makeSlime(newRank, mid.x, mid.y);
-    nb.plugin.slime.squash = 0.6;   // ぷるん
-    nb.plugin.slime.spawnPop = 1;
-
-    // 連鎖 (§14: 連鎖ボーナス)
-    chainCount++;
-    chainTimer = 0.5; // 0.5秒以内に次の合体が起きれば連鎖継続
-    const def = SLIMES[newRank];
-    const chainMult = chainCount > 1 ? chainCount : 1;
-    const gained = def.score * chainMult;
-    addScore(gained, mid.x, mid.y, chainCount > 1, chainCount);
-
-    // エフェクト
-    burst(mid.x, mid.y, def.color, 14 + newRank);
-    rings.push({ x:mid.x, y:mid.y, r:def.r*0.5, max:def.r*2.2, life:1, color:def.color });
-    spawnBubbles(mid.x, mid.y, 4 + newRank, def.r*1.1);   // 合体で泡が立ちのぼる
-    // 高ランクの合体は生物発光がフラッシュ
-    if(newRank >= 7){
-      const glowCol = def.rainbow ? '#8fe9ff' : (def.metal ? '#e0c8ff' : def.color);
-      triggerFlash(glowCol, 0.28 + (newRank-7)*0.14, mid.x, mid.y);
+    // ワイルド：相手とどれでも合体
+    if(aWild || bWild){
+      const other = aWild ? b : a;
+      const otherS = other.plugin.slime;
+      const mid = midpoint(a, b);
+      sa.merged = true; sb.merged = true;
+      removeBody(a); removeBody(b);
+      if(otherS.special === 'wild') doMerge(2, mid);            // ワイルド同士 → rank2
+      else if(otherS.rank >= MAX_RANK) kingMerge(mid);         // 相手がキング → 消して大ボーナス
+      else doMerge(otherS.rank + 1, mid);                      // 相手の1つ上へ進化
+      continue;
     }
-    SFX.merge(newRank);
-    if(chainCount > 1) SFX.chain(chainCount);
-    shake(Math.min(3 + newRank*0.8, 12));
+
+    // 通常：同ランク同士のみ
+    if(sa.rank !== sb.rank) continue;
+    sa.merged = true; sb.merged = true;
+    const mid = midpoint(a, b);
+    removeBody(a); removeBody(b);
+    if(sa.rank === MAX_RANK) kingMerge(mid);                    // キング同士
+    else doMerge(sa.rank + 1, mid);
   }
 
   // ---- 着地・衝突の連動泡（合体以外の強い接触で発生・body毎にスロットル） ----
@@ -607,8 +623,71 @@ function onCollision(ev){
     const sup = pair.collision && pair.collision.supports && pair.collision.supports[0];
     const px = sup ? sup.x : body.position.x;
     const py = sup ? sup.y : body.position.y;
-    spawnBubbles(px, py, Math.min(5, 1 + Math.floor(sp/2.2)), SLIMES[s.rank].r*0.7);
+    spawnBubbles(px, py, Math.min(5, 1 + Math.floor(sp/2.2)), s.r*0.7);
   }
+}
+
+// 通常合体（生成＋連鎖＋スコア＋演出）
+function doMerge(newRank, mid){
+  if(newRank > MAX_RANK){ kingMerge(mid); return; }
+  const nb = makeSlime(newRank, mid.x, mid.y);
+  nb.plugin.slime.squash = 0.6;
+  nb.plugin.slime.spawnPop = 1;
+  chainCount++;
+  chainTimer = 0.5;
+  const def = SLIMES[newRank];
+  const chainMult = chainCount > 1 ? chainCount : 1;
+  addScore(def.score * chainMult, mid.x, mid.y, chainCount > 1, chainCount);
+  burst(mid.x, mid.y, def.color, 14 + newRank);
+  rings.push({ x:mid.x, y:mid.y, r:def.r*0.5, max:def.r*2.2, life:1, color:def.color });
+  spawnBubbles(mid.x, mid.y, 4 + newRank, def.r*1.1);
+  if(newRank >= 7){
+    const glowCol = def.rainbow ? '#8fe9ff' : (def.metal ? '#e0c8ff' : def.color);
+    triggerFlash(glowCol, 0.28 + (newRank-7)*0.14, mid.x, mid.y);
+  }
+  SFX.merge(newRank);
+  if(chainCount > 1) SFX.chain(chainCount);
+  shake(Math.min(3 + newRank*0.8, 12));
+}
+
+// キング同士（またはワイルド＋キング）→ 消して大ボーナス
+function kingMerge(mid){
+  addScore(999, mid.x, mid.y, true);
+  burst(mid.x, mid.y, '#ffe08a', 40);
+  rings.push({ x:mid.x, y:mid.y, r:10, max:260, life:1, color:'#fff2b0' });
+  spawnBubbles(mid.x, mid.y, 34, 90);
+  triggerFlash('#fff2b0', 0.95, mid.x, mid.y);
+  SFX.king();
+  shake(16);
+}
+
+// ボム爆発：周囲のスライムを巻き込んで消す
+function detonate(bombBody){
+  const s0 = bombBody.plugin.slime;
+  const bx = bombBody.position.x, by = bombBody.position.y;
+  const R = s0.r * 3.6;                 // 爆風半径
+  removeBody(bombBody);
+  let cleared = 0, gained = 0;
+  for(const other of [...bodies]){
+    const os = other.plugin.slime;
+    if(!os || os.merged) continue;
+    const d = Math.hypot(other.position.x - bx, other.position.y - by);
+    if(d < R + os.r){
+      os.merged = true;
+      const sc = os.special ? 5 : SLIMES[os.rank].score;
+      gained += Math.ceil(sc * 0.6);
+      burst(other.position.x, other.position.y, metaColor(os), 8);
+      spawnBubbles(other.position.x, other.position.y, 4, os.r);
+      removeBody(other);
+      cleared++;
+    }
+  }
+  if(gained > 0) addScore(gained, bx, by, cleared > 1, 0);
+  burst(bx, by, '#ff8a4a', 34);
+  rings.push({ x:bx, y:by, r:12, max:R*2, life:1, color:'#ff9a5a' });
+  triggerFlash('#ff7a3c', 0.55, bx, by);
+  SFX.boom();
+  shake(14);
 }
 
 function removeBody(body){
@@ -639,22 +718,35 @@ function randomDropRank(){
   return 1;
 }
 
-function prepareNext(){
-  current = { rank: nextRank };
-  nextRank = randomDropRank();
+// 次に投下するアイテム（低確率で特殊スライム）
+function randomDropItem(){
+  if(Math.random() < SPECIAL_CHANCE){
+    return { special: SPECIAL_KINDS[Math.floor(Math.random()*SPECIAL_KINDS.length)] };
+  }
+  return { rank: randomDropRank() };
 }
 
-function clampDropX(rank){
-  const r = SLIMES[rank].r;
+// アイテムの半径
+function itemRadius(item){
+  return item.special ? SPECIALS[item.special].r : SLIMES[item.rank].r;
+}
+
+function prepareNext(){
+  current = nextItem;
+  nextItem = randomDropItem();
+}
+
+function clampDropX(r){
   return Math.max(WALL + r, Math.min(W - WALL - r, pointerX));
 }
 
 function dropCurrent(){
   if(state !== 'playing' || !current || !canDrop) return;
-  const rank = current.rank;
-  const x = clampDropX(rank);
+  const r = itemRadius(current);
+  const x = clampDropX(r);
   const y = DEAD_LINE - 30;
-  makeSlime(rank, x, y);
+  if(current.special) makeSpecial(current.special, x, y);
+  else makeSlime(current.rank, x, y);
   SFX.drop();
 
   current = null;
@@ -671,7 +763,7 @@ function checkGameOver(dt){
   for(const b of bodies){
     const s = b.plugin.slime;
     if(s.merged) continue;
-    const r = SLIMES[s.rank].r;
+    const r = s.r;
     // ある程度落ち着いた（低速）スライムがデッドラインを超えているか
     if(b.position.y - r < DEAD_LINE && Math.abs(b.velocity.y) < 1.2){
       over = true; break;
@@ -1219,8 +1311,7 @@ function drawTideBanner(){
 // ---- スライム本体描画 ----------------------------------------------------
 function drawSlime(b){
   const s = b.plugin.slime;
-  const def = SLIMES[s.rank];
-  const r = def.r;
+  const r = s.r;
   const x = b.position.x, y = b.position.y;
 
   // squash 減衰
@@ -1251,8 +1342,57 @@ function drawSlime(b){
   ctx.save();
   ctx.translate(x, y);
   ctx.scale(scaleX, scaleY);
-  drawBlob(0, 0, r, def, s, angle);
+  if(s.special) drawSpecialBlob(0, 0, r, s.special, s);
+  else drawBlob(0, 0, r, SLIMES[s.rank], s, angle);
   ctx.restore();
+}
+
+// 特殊スライムの描画（本体＋顔＋固有アイコン）
+function drawSpecialBlob(cx, cy, r, kind, s){
+  const ctx = gfx;
+  const def = kind === 'bomb'
+    ? { rank:0, color:'#3b4250', glow:'#ff6a3c' }
+    : { rank:0, color:'#8fd0ff', rainbow:true };
+  drawSlimeBody(cx, cy, r, def);
+  drawFace(cx, cy, r, def, s);
+  const t = performance.now()/1000;
+  if(kind === 'bomb'){
+    // 導火線＋パチパチする火花
+    ctx.save();
+    ctx.strokeStyle = 'rgba(180,170,160,0.9)';
+    ctx.lineWidth = Math.max(2, r*0.07);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - r*0.92);
+    ctx.quadraticCurveTo(cx + r*0.28, cy - r*1.25, cx + r*0.1, cy - r*1.42);
+    ctx.stroke();
+    const sp = 0.6 + 0.4*Math.sin(t*22);
+    ctx.fillStyle = 'rgba(255,210,90,'+sp+')';
+    ctx.beginPath(); ctx.arc(cx + r*0.1, cy - r*1.44, r*0.13*sp + 2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,120,40,'+(sp*0.85)+')';
+    ctx.beginPath(); ctx.arc(cx + r*0.1, cy - r*1.44, r*0.06, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  } else {
+    // ワイルド：きらめく星スパークル
+    ctx.save();
+    const tw = 0.6 + 0.4*Math.sin(t*4);
+    ctx.fillStyle = 'rgba(255,255,255,'+tw+')';
+    drawSparkle(cx + r*0.5, cy - r*0.72, r*0.26);
+    drawSparkle(cx - r*0.55, cy - r*0.3, r*0.16);
+    ctx.restore();
+  }
+}
+
+// 4方向にとがる星のきらめき（gfxに描画）
+function drawSparkle(cx, cy, s){
+  const ctx = gfx;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - s);
+  ctx.quadraticCurveTo(cx, cy, cx + s, cy);
+  ctx.quadraticCurveTo(cx, cy, cx, cy + s);
+  ctx.quadraticCurveTo(cx, cy, cx - s, cy);
+  ctx.quadraticCurveTo(cx, cy, cx, cy - s);
+  ctx.fill();
 }
 
 // スライム描画：本体（真球シェーディング）＋ 顔/アクセサリ（body.angle で回転）
@@ -1272,7 +1412,7 @@ function drawBlob(cx, cy, r, def, s, angle=0){
 function drawSlimeBody(cx, cy, r, def){
   const ctx = gfx;
   // 生物発光グロー（深海）：本体の色で淡いハローを add 合成。上位ほど強く光る
-  const glowCol = def.rainbow ? '#7fe6ff' : (def.metal ? '#d0b8ff' : def.color);
+  const glowCol = def.glow || (def.rainbow ? '#7fe6ff' : (def.metal ? '#d0b8ff' : def.color));
   const glowStr = 0.22 + Math.min(def.rank, 11)*0.02;
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -1571,9 +1711,8 @@ function drawWings(cx, cy, r){
 
 // ---- 待機スライム & next --------------------------------------------------
 function drawWaiting(){
-  const rank = current.rank;
-  const def = SLIMES[rank];
-  const x = clampDropX(rank);
+  const r = itemRadius(current);
+  const x = clampDropX(r);
   const y = DEAD_LINE - 30;
   // ガイドライン
   ctx.save();
@@ -1581,7 +1720,7 @@ function drawWaiting(){
   ctx.lineWidth = 2;
   ctx.setLineDash([6,8]);
   ctx.beginPath();
-  ctx.moveTo(x, y + def.r);
+  ctx.moveTo(x, y + r);
   ctx.lineTo(x, FLOOR);
   ctx.stroke();
   ctx.restore();
@@ -1591,7 +1730,8 @@ function drawWaiting(){
   ctx.save();
   ctx.translate(x, y + bob);
   const dummy = { blink: 99, blinkPhase:0, wobble: performance.now()/300 };
-  drawBlob(0, 0, def.r, def, dummy);
+  if(current.special) drawSpecialBlob(0, 0, r, current.special, dummy);
+  else drawBlob(0, 0, r, SLIMES[current.rank], dummy, 0);
   ctx.restore();
 }
 
@@ -1673,14 +1813,15 @@ function drawHUD(){
   ctx.font = 'bold 22px sans-serif';
   ctx.fillText('NEXT', W - 40, 44);
   ctx.shadowBlur = 0;
-  const ndef = SLIMES[nextRank];
-  const nx = W - 62, ny = 84, nr = Math.min(ndef.r, 26);
+  const nrExact = itemRadius(nextItem);
+  const nx = W - 62, ny = 84, nr = Math.min(nrExact, 26);
   const dummy = { blink:99, blinkPhase:0, wobble: performance.now()/300 };
   ctx.save();
   ctx.translate(nx, ny);
-  const sc = nr / ndef.r;
+  const sc = nr / nrExact;
   ctx.scale(sc, sc);
-  drawBlob(0, 0, ndef.r, ndef, dummy);
+  if(nextItem.special) drawSpecialBlob(0, 0, nrExact, nextItem.special, dummy);
+  else drawBlob(0, 0, nrExact, SLIMES[nextItem.rank], dummy, 0);
   ctx.restore();
 
   ctx.restore();
@@ -1782,7 +1923,7 @@ function resetGame(){
   overLineTime = 0;
   canDrop = true;
   current = null;
-  nextRank = randomDropRank();
+  nextItem = randomDropItem();
   prepareNext();
   initTide();
   startedAt = performance.now();
@@ -1806,23 +1947,43 @@ document.getElementById('mute').addEventListener('click', (e) => {
 // -------------------------------------------------------------------------
 //  図鑑（コレクション）
 // -------------------------------------------------------------------------
-function drawDexThumb(g, size, def, known){
-  if(!known){
-    g.save();
-    g.fillStyle = 'rgba(120,160,190,0.16)';
-    g.beginPath(); g.arc(size/2, size*0.54, size*0.3, 0, Math.PI*2); g.fill();
-    g.fillStyle = 'rgba(200,230,255,0.5)';
-    g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillText('?', size/2, size*0.56);
-    g.restore();
-    return;
-  }
-  // 既存のスライム描画を流用（出力先を一時的に g に差し替え）
-  const prev = gfx;
-  gfx = g;
+function drawDexLocked(g, size){
+  g.save();
+  g.fillStyle = 'rgba(120,160,190,0.16)';
+  g.beginPath(); g.arc(size/2, size*0.54, size*0.3, 0, Math.PI*2); g.fill();
+  g.fillStyle = 'rgba(200,230,255,0.5)';
+  g.font = 'bold 26px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('?', size/2, size*0.56);
+  g.restore();
+}
+// 既存のスライム描画を流用（出力先を一時的に g に差し替え）
+function dexDrawRank(g, size, rank){
+  const prev = gfx; gfx = g;
   const dummy = { blink:99, blinkPhase:0, wobble:0, squash:0, spawnPop:0 };
-  drawBlob(size/2, size*0.56, size*0.3, def, dummy, 0);
+  drawBlob(size/2, size*0.56, size*0.3, SLIMES[rank], dummy, 0);
   gfx = prev;
+}
+function dexDrawSpecial(g, size, kind){
+  const prev = gfx; gfx = g;
+  const dummy = { blink:99, blinkPhase:0, wobble:0, squash:0, spawnPop:0 };
+  drawSpecialBlob(size/2, size*0.56, size*0.27, kind, dummy);
+  gfx = prev;
+}
+function makeDexCell(dpr, size, known, name, desc, drawKnown){
+  const cell = document.createElement('div');
+  cell.className = 'dexCell' + (known ? '' : ' locked');
+  const cv = document.createElement('canvas');
+  cv.width = size*dpr; cv.height = size*dpr;
+  cv.style.width = size+'px'; cv.style.height = size+'px';
+  const g = cv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if(known) drawKnown(g); else drawDexLocked(g, size);
+  const nm = document.createElement('div'); nm.className = 'nm';
+  nm.textContent = known ? name : '???';
+  const ds = document.createElement('div'); ds.className = 'ds';
+  ds.textContent = known ? desc : 'みはっけん';
+  cell.appendChild(cv); cell.appendChild(nm); cell.appendChild(ds);
+  return cell;
 }
 
 function buildDex(){
@@ -1832,23 +1993,16 @@ function buildDex(){
   const size = 66;
   for(let rank=1; rank<=MAX_RANK; rank++){
     const def = SLIMES[rank];
-    const known = discovered.has(rank);
-    const cell = document.createElement('div');
-    cell.className = 'dexCell' + (known ? '' : ' locked');
-    const cv = document.createElement('canvas');
-    cv.width = size*dpr; cv.height = size*dpr;
-    cv.style.width = size+'px'; cv.style.height = size+'px';
-    const g = cv.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawDexThumb(g, size, def, known);
-    const nm = document.createElement('div'); nm.className = 'nm';
-    nm.textContent = known ? def.name : '???';
-    const ds = document.createElement('div'); ds.className = 'ds';
-    ds.textContent = known ? def.desc : 'みはっけん';
-    cell.appendChild(cv); cell.appendChild(nm); cell.appendChild(ds);
-    grid.appendChild(cell);
+    grid.appendChild(makeDexCell(dpr, size, discovered.has(rank), def.name, def.desc,
+      (g) => dexDrawRank(g, size, rank)));
   }
-  document.getElementById('dexProgress').textContent = 'はっけん ' + discovered.size + ' / ' + MAX_RANK;
+  for(const kind of SPECIAL_KINDS){
+    const sp = SPECIALS[kind];
+    grid.appendChild(makeDexCell(dpr, size, discovered.has(kind), sp.name, sp.desc,
+      (g) => dexDrawSpecial(g, size, kind)));
+  }
+  const total = MAX_RANK + SPECIAL_KINDS.length;
+  document.getElementById('dexProgress').textContent = 'はっけん ' + discovered.size + ' / ' + total;
 }
 
 function openDex(){ buildDex(); document.getElementById('dexOverlay').classList.add('show'); }
