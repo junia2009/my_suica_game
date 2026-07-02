@@ -322,9 +322,9 @@ function getAvail(){
 function computeLogicalSize(){
   const a = getAvail();
   // 安全領域の縦横比に合わせて H を決定（極端に細長く/短くならないようクランプ）
-  H = Math.round(Math.min(W*2.0, Math.max(W*1.35, W * (a.h / a.w))));
+  H = Math.round(Math.min(W*1.75, Math.max(W*1.35, W * (a.h / a.w))));
   FLOOR = H - BOTTOM_UI;     // 床を少し上げ、下部の帯に音量ボタンを置く
-  DEAD_LINE = Math.round(H * 0.15);
+  DEAD_LINE = Math.round(H * 0.16);
 }
 
 // 2つの16進色を線形補間して 'rgb()' を返す
@@ -387,7 +387,7 @@ const SPECIALS = {
           desc:'どんなスライムとも合体できる万能個体。1つ上へ進化させる。' },
 };
 const SPECIAL_KINDS = ['bomb', 'wild'];
-const SPECIAL_CHANCE = 0.07;   // 次の投下が特殊になる確率
+const SPECIAL_CHANCE = 0.035;  // 次の投下が特殊になる確率
 
 // =========================================================================
 //  オーディオ（WebAudio 簡易効果音）
@@ -494,6 +494,8 @@ function initTide(){
   }
 }
 const TIDE_WARN = 1.7;                 // 予告の長さ(秒)
+// 深度による難化係数 0..1（1200mで最大）。深く潜るほど海が荒れる。
+function difficultyRamp(){ return Math.min(1, depthM / 1200); }
 function updateTide(dt){
   if(state !== 'playing'){ tide.strength = 0; tide.vx = 0; return; }
   tide.timer -= dt;
@@ -506,7 +508,7 @@ function updateTide(dt){
   } else if(tide.phase === 'warn'){
     if(tide.timer <= 0){
       tide.phase = 'active';
-      tide.dur = 2.6 + Math.random()*1.8;
+      tide.dur = 2.6 + Math.random()*1.8 + difficultyRamp()*1.2;  // 深いほど長く吹く
       tide.timer = tide.dur;
       SFX.tide();
     }
@@ -518,7 +520,8 @@ function updateTide(dt){
     tide.strength = Math.min(easeIn, easeOut);
     if(tide.timer <= 0){
       tide.phase = 'idle';
-      tide.timer = 11 + Math.random()*8;
+      // 深いほど間隔が短くなる（最大45%短縮）
+      tide.timer = (11 + Math.random()*8) * (1 - 0.45*difficultyRamp());
       tide.strength = 0;
     }
   }
@@ -538,7 +541,9 @@ function updateTide(dt){
 function applyTideForce(){
   if(tide.phase !== 'active' || tide.strength <= 0) return;
   const base = world.gravity.scale * world.gravity.y; // 1updateあたりの重力係数
-  const fx = tide.dir * tide.strength * base * 0.7;    // 重力の約0.7倍を横に
+  // 深いほど強い海流（0.7x → 最大1.05x 重力）
+  const power = 0.7 * (1 + 0.5*difficultyRamp());
+  const fx = tide.dir * tide.strength * base * power;
   for(const b of bodies){
     Body.applyForce(b, b.position, { x: fx * b.mass, y: 0 });
   }
@@ -757,7 +762,7 @@ function kingMerge(mid){
 function detonate(bombBody){
   const s0 = bombBody.plugin.slime;
   const bx = bombBody.position.x, by = bombBody.position.y;
-  const R = s0.r * 3.6;                 // 爆風半径
+  const R = s0.r * 3.0;                 // 爆風半径
   removeBody(bombBody);
   let cleared = 0, gained = 0;
   for(const other of [...bodies]){
@@ -803,7 +808,7 @@ function addScore(amount, x, y, isChain=false, chain=0){
 // -------------------------------------------------------------------------
 function randomDropRank(){
   // 低ランクほど出やすい重み付け
-  const weights = [0,5,4,3,2,1]; // rank1..5
+  const weights = [0,4,4,3,2,2]; // rank1..5
   let total = 0; for(let r=1;r<=DROPPABLE_MAX;r++) total += weights[r];
   let x = Math.random()*total;
   for(let r=1;r<=DROPPABLE_MAX;r++){ x -= weights[r]; if(x<=0) return r; }
