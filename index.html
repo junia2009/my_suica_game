@@ -347,6 +347,7 @@ function updateDepth(){
   envCol.ray = a.ray + (b.ray - a.ray) * t;
   envCol.surf = a.surf + (b.surf - a.surf) * t;
   zoneName = a.name;
+  BGM.setDepth01(Math.min(1, depthM / 1200));   // 深いほどBGMが暗くこもる
 }
 
 // ---- スライム定義 (§2) --------------------------------------------------
@@ -417,8 +418,161 @@ const SFX = (() => {
     boom(){ tone(130, 0.4, 'sawtooth', 0.26, 40); setTimeout(()=>tone(80,0.3,'square',0.18,30),25); }, // 爆発
     toggle(){ muted = !muted; return muted; },
     resume,
+    getCtx(){ return ac(); },   // BGMとAudioContextを共有
   };
 })();
+
+// =========================================================================
+//  BGM — WebAudio生成の深海アンビエント（外部ファイル不要・オフラインOK）
+//  パッド（浮遊コード）＋ペンタトニックのベル（水中エコー付き）＋サブベース。
+//  水深に連動してローパスが閉じ、深いほど暗くまばらな響きになる。
+// =========================================================================
+const BGM = (() => {
+  let started = false, running = false, muted = false;
+  let master = null, padFilter = null, delaySend = null;
+  let chordTimer = null, pluckTimer = null, chordIdx = 0;
+  let depth01 = 0, lastDepthSent = -1;
+
+  const ROOT = 73.42;   // D2
+  const CHORD_DUR = 7.5;
+  // 浮遊感のあるコード進行（半音オフセット）
+  const CHORDS = [
+    { pad:[0, 7, 14, 17],   bass:0  },   // Dm9
+    { pad:[-4, 5, 10, 17],  bass:-4 },   // B♭M7
+    { pad:[3, 12, 19, 24],  bass:3  },   // FM9
+    { pad:[-2, 10, 14, 22], bass:-2 },   // Cadd9
+  ];
+  const PENTA = [0, 3, 5, 7, 10];        // Dマイナーペンタ
+
+  const freq = (semi, oct=0) => ROOT * Math.pow(2, (semi + oct*12) / 12);
+  const ctx = () => SFX.getCtx();
+
+  function ensureGraph(){
+    const c = ctx(); if(!c) return null;
+    if(master) return c;
+    master = c.createGain(); master.gain.value = 0;
+    // パッドの質感：深度で閉じるローパス
+    padFilter = c.createBiquadFilter();
+    padFilter.type = 'lowpass'; padFilter.frequency.value = 950; padFilter.Q.value = 0.6;
+    padFilter.connect(master);
+    // 水中エコー（ディレイ＋こもったフィードバック）
+    delaySend = c.createGain(); delaySend.gain.value = 0.5;
+    const dly = c.createDelay(1.0); dly.delayTime.value = 0.42;
+    const fb = c.createGain(); fb.gain.value = 0.38;
+    const damp = c.createBiquadFilter(); damp.type = 'lowpass'; damp.frequency.value = 1400;
+    delaySend.connect(dly); dly.connect(damp); damp.connect(fb); fb.connect(dly);
+    damp.connect(master);
+    master.connect(c.destination);
+    return c;
+  }
+
+  function padChord(chord){
+    const c = ctx();
+    for(const semi of chord.pad){
+      const o = c.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = freq(semi, 1);            // D3帯
+      o.detune.value = (Math.random()-0.5)*10;      // 微デチューンでコーラス感
+      const g = c.createGain();
+      g.gain.setValueAtTime(0, c.currentTime);
+      g.gain.linearRampToValueAtTime(0.045, c.currentTime + CHORD_DUR*0.35);
+      g.gain.setValueAtTime(0.045, c.currentTime + CHORD_DUR*0.75);
+      g.gain.linearRampToValueAtTime(0, c.currentTime + CHORD_DUR + 1.5);
+      o.connect(g); g.connect(padFilter);
+      o.start(); o.stop(c.currentTime + CHORD_DUR + 1.6);
+    }
+    // サブベース（ルート）
+    const b = c.createOscillator(); b.type = 'sine';
+    b.frequency.value = freq(chord.bass, 0);
+    const bg = c.createGain();
+    bg.gain.setValueAtTime(0, c.currentTime);
+    bg.gain.linearRampToValueAtTime(0.07, c.currentTime + CHORD_DUR*0.3);
+    bg.gain.linearRampToValueAtTime(0, c.currentTime + CHORD_DUR + 1);
+    b.connect(bg); bg.connect(master);
+    b.start(); b.stop(c.currentTime + CHORD_DUR + 1.1);
+  }
+
+  function pluck(chord){
+    const c = ctx();
+    const semi = PENTA[Math.floor(Math.random()*PENTA.length)] + chord.bass;
+    const oct = 2 + (Math.random() < 0.3 ? 1 : 0);  // D4〜D5帯
+    const o = c.createOscillator(); o.type = 'sine';
+    o.frequency.value = freq(semi, oct);
+    const g = c.createGain();
+    const v = 0.035 + Math.random()*0.025;
+    g.gain.setValueAtTime(0, c.currentTime);
+    g.gain.linearRampToValueAtTime(v, c.currentTime + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0005, c.currentTime + 1.6);
+    o.connect(g); g.connect(padFilter); g.connect(delaySend);
+    o.start(); o.stop(c.currentTime + 1.7);
+  }
+
+  function chordLoop(){
+    if(!running) return;
+    padChord(CHORDS[chordIdx % CHORDS.length]);
+    chordIdx++;
+    chordTimer = setTimeout(chordLoop, CHORD_DUR*1000);
+  }
+  function pluckLoop(){
+    if(!running) return;
+    const chord = CHORDS[(chordIdx - 1 + CHORDS.length) % CHORDS.length];
+    if(Math.random() < 0.9) pluck(chord);
+    // 深いほどまばらに鳴る
+    pluckTimer = setTimeout(pluckLoop, 900 + Math.random()*1600 + depth01*900);
+  }
+  function stopTimers(){
+    clearTimeout(chordTimer); clearTimeout(pluckTimer);
+    chordTimer = pluckTimer = null;
+  }
+
+  return {
+    start(){
+      const c = ensureGraph(); if(!c) return;
+      if(c.state === 'suspended') c.resume();
+      if(started){ if(!running){ running = true; chordLoop(); pluckLoop(); } return; }
+      started = true; running = true;
+      master.gain.cancelScheduledValues(c.currentTime);
+      master.gain.setValueAtTime(0, c.currentTime);
+      master.gain.linearRampToValueAtTime(muted ? 0 : 0.55, c.currentTime + 2.5);
+      chordLoop(); pluckLoop();
+    },
+    setMuted(m){
+      muted = m;
+      const c = ctx(); if(!c || !master) return;
+      master.gain.cancelScheduledValues(c.currentTime);
+      master.gain.setValueAtTime(master.gain.value, c.currentTime);
+      master.gain.linearRampToValueAtTime(m ? 0 : 0.55, c.currentTime + 0.4);
+    },
+    setDepth01(x){
+      depth01 = x;
+      if(!padFilter) return;   // BGM未開始ならAudioContextに触らない
+      // フィルタのスケジューリングは変化があった時だけ（毎フレーム呼ばれる）
+      if(Math.abs(x - lastDepthSent) < 0.02) return;
+      lastDepthSent = x;
+      const c = ctx(); if(!c) return;
+      padFilter.frequency.cancelScheduledValues(c.currentTime);
+      padFilter.frequency.setValueAtTime(padFilter.frequency.value, c.currentTime);
+      padFilter.frequency.linearRampToValueAtTime(950 - 620*x, c.currentTime + 1.5);
+    },
+    // バックグラウンド時：タイマーを止めて音を休止（復帰で再開）
+    pause(){
+      if(!started) return;
+      running = false; stopTimers();
+      const c = ctx(); if(c && c.state === 'running') c.suspend();
+    },
+    resume(){
+      if(!started || running) return;
+      const c = ctx(); if(c && c.state === 'suspended') c.resume();
+      running = true; chordLoop(); pluckLoop();
+    },
+  };
+})();
+
+// タブが隠れたらBGM/音声を休止、戻ったら再開
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden) BGM.pause();
+  else BGM.resume();
+});
 
 // =========================================================================
 //  ゲーム本体
@@ -2171,6 +2325,7 @@ function resetGame(){
 
 function startGame(){
   SFX.resume();
+  BGM.start();
   document.getElementById('startOverlay').classList.remove('show');
   document.getElementById('overOverlay').classList.remove('show');
   resetGame();
@@ -2180,6 +2335,7 @@ document.getElementById('startBtn').addEventListener('click', startGame);
 document.getElementById('retryBtn').addEventListener('click', startGame);
 document.getElementById('mute').addEventListener('click', (e) => {
   const m = SFX.toggle();
+  BGM.setMuted(m);
   e.currentTarget.textContent = m ? '🔇' : '🔊';
 });
 
