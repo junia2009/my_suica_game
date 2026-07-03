@@ -1691,14 +1691,23 @@ function drawSlime(b){
 }
 
 // 特殊スライムの描画（本体＋顔＋固有アイコン）
+// マリオ無敵風のパレット（高速で切り替わる）
+const WILD_PALETTE = ['#ffffff','#ffe14d','#ff9a4d','#ff4d6e','#ff4dd2','#b04dff','#4d9fff','#4dffd2','#7dff4d'];
+const WILD_HZ = 12;   // 1秒あたりの色切替回数
+
 function drawSpecialBlob(cx, cy, r, kind, s){
   const ctx = gfx;
-  const def = kind === 'bomb'
-    ? { rank:0, color:'#3b4250', glow:'#ff6a3c' }
-    : { rank:0, color:'#8fd0ff', rainbow:true };
+  const t = performance.now()/1000;
+  let def;
+  if(kind === 'bomb'){
+    def = { rank:0, color:'#3b4250', glow:'#ff6a3c' };
+  } else {
+    // ワイルド：本体色そのものがパレットフラッシュ（グローも同色で明滅）
+    const col = WILD_PALETTE[Math.floor(t*WILD_HZ) % WILD_PALETTE.length];
+    def = { rank:0, color: col, glow: col };
+  }
   drawSlimeBody(cx, cy, r, def);
   drawFace(cx, cy, r, def, s);
-  const t = performance.now()/1000;
   if(kind === 'bomb'){
     // 導火線＋パチパチする火花
     ctx.save();
@@ -1716,34 +1725,20 @@ function drawSpecialBlob(cx, cy, r, kind, s){
     ctx.beginPath(); ctx.arc(cx + r*0.1, cy - r*1.44, r*0.06, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   } else {
-    // ワイルド：虹色に脈打つオーラ＋虹リム＋周回するキラキラ
+    // ワイルド：色切替の瞬間に白くパッと光る「点滅ポップ」＋星のきらめき
     ctx.save();
-    const hue = (t*90) % 360;
-    // 脈打つ虹ハロー（add合成）
+    const step = t*WILD_HZ;
+    const phase = step - Math.floor(step);   // 各ステップ内 0→1
+    // 切替直後ほど強い白フラッシュ（add合成）
     ctx.globalCompositeOperation = 'lighter';
-    const pulse = 0.55 + 0.45*Math.sin(t*5);
-    const halo = ctx.createRadialGradient(cx, cy, r*0.6, cx, cy, r*1.6);
-    halo.addColorStop(0, 'hsla('+hue+',100%,72%,'+(0.30*pulse)+')');
-    halo.addColorStop(1, 'hsla('+hue+',100%,72%,0)');
-    ctx.fillStyle = halo;
-    ctx.beginPath(); ctx.arc(cx, cy, r*1.6, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 0.38 * (1 - phase);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(cx, cy, r*1.04, 0, Math.PI*2); ctx.fill();
     ctx.globalCompositeOperation = 'source-over';
-    // 色相が回る虹リム
-    ctx.lineWidth = Math.max(2, r*0.09);
-    ctx.strokeStyle = 'hsla('+hue+',95%,74%,0.9)';
-    ctx.beginPath(); ctx.arc(cx, cy, r*1.03, 0, Math.PI*2); ctx.stroke();
-    // 周回するキラキラ（3つ・サイズも明滅）
+    // 本体の上のきらめき（星）
+    ctx.globalAlpha = 0.7 + 0.3*Math.sin(t*10);
     ctx.fillStyle = 'rgba(255,255,255,0.95)';
-    for(let i=0;i<3;i++){
-      const a = t*1.8 + i*(Math.PI*2/3);
-      const px = cx + Math.cos(a)*r*1.25;
-      const py = cy + Math.sin(a)*r*1.12;
-      const ss = r*(0.17 + 0.08*Math.sin(t*6 + i*2.1));
-      drawSparkle(px, py, Math.max(r*0.09, ss));
-    }
-    // 本体のツヤ位置のきらめき
-    ctx.globalAlpha = 0.6 + 0.4*Math.sin(t*4);
-    drawSparkle(cx + r*0.5, cy - r*0.72, r*0.28);
+    drawSparkle(cx + r*0.5, cy - r*0.72, r*0.30);
     drawSparkle(cx - r*0.55, cy - r*0.32, r*0.18);
     ctx.restore();
   }
