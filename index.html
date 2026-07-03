@@ -80,6 +80,8 @@
   }
   .overlay p { margin: 0; font-size: 20px; }
   .overlay .big { font-size: 30px; font-weight: 700; }
+  .stat-card p { font-size: 17px; white-space: nowrap; }
+  .stat-card .big { font-size: 24px; }
   .btn {
     cursor: pointer;
     border: none;
@@ -274,6 +276,7 @@
       </div>
       <button id="retryBtn" class="btn primary">もう一回</button>
       <button id="dexBtnOver" class="btn sub">ずかん</button>
+      <button id="homeBtn" class="btn sub">ホームへ</button>
     </div>
 
     <div id="dexOverlay" class="overlay">
@@ -355,7 +358,7 @@ function updateDepth(){
 const SLIMES = [
   null, // index 0 未使用（rank=1始まり）
   { rank:1,  name:'しずく',        r:20,  color:'#7ec8e3', score:1,  desc:'海面から落ちてきた小さな雫。すべての始まり。' },
-  { rank:2,  name:'こつぶ',        r:28,  color:'#a8d84f', score:3,  desc:'ふたつ寄り添って生まれた粒。ぷるぷる元気。' },
+  { rank:2,  name:'こつぶ',        r:28,  color:'#ffa94d', score:3,  desc:'ふたつ寄り添って生まれた粒。ぷるぷる元気。' },
   { rank:3,  name:'ぷにまる',      r:38,  color:'#5fbf5f', score:6,  desc:'ほっぺが自慢のまんまるスライム。' },
   { rank:4,  name:'あおスラ',      r:46,  color:'#4a7fd6', score:10, desc:'深い青をまとった、少し大人なスライム。' },
   { rank:5,  name:'むらさき',      r:56,  color:'#9b6fd6', score:15, desc:'ツノが生えはじめた証。ちょっと得意げ。' },
@@ -831,8 +834,8 @@ function setupPhysics(){
   const wallOpt = { isStatic:true, restitution:0.1, friction:0.5, label:'wall' };
   World.add(world, [
     Bodies.rectangle(W/2, FLOOR + WALL, W + WALL*2, WALL*2, wallOpt),          // 底（上面がFLOOR）
-    Bodies.rectangle(-WALL/2, H/2, WALL, H*2, wallOpt),                        // 左
-    Bodies.rectangle(W + WALL/2, H/2, WALL, H*2, wallOpt),                     // 右
+    Bodies.rectangle(WALL/2, H/2, WALL, H*2, wallOpt),                         // 左（描画壁と一致）
+    Bodies.rectangle(W - WALL/2, H/2, WALL, H*2, wallOpt),                     // 右（描画壁と一致）
   ]);
 
   Events.on(engine, 'collisionStart', onCollision);
@@ -1713,12 +1716,35 @@ function drawSpecialBlob(cx, cy, r, kind, s){
     ctx.beginPath(); ctx.arc(cx + r*0.1, cy - r*1.44, r*0.06, 0, Math.PI*2); ctx.fill();
     ctx.restore();
   } else {
-    // ワイルド：きらめく星スパークル
+    // ワイルド：虹色に脈打つオーラ＋虹リム＋周回するキラキラ
     ctx.save();
-    const tw = 0.6 + 0.4*Math.sin(t*4);
-    ctx.fillStyle = 'rgba(255,255,255,'+tw+')';
-    drawSparkle(cx + r*0.5, cy - r*0.72, r*0.26);
-    drawSparkle(cx - r*0.55, cy - r*0.3, r*0.16);
+    const hue = (t*90) % 360;
+    // 脈打つ虹ハロー（add合成）
+    ctx.globalCompositeOperation = 'lighter';
+    const pulse = 0.55 + 0.45*Math.sin(t*5);
+    const halo = ctx.createRadialGradient(cx, cy, r*0.6, cx, cy, r*1.6);
+    halo.addColorStop(0, 'hsla('+hue+',100%,72%,'+(0.30*pulse)+')');
+    halo.addColorStop(1, 'hsla('+hue+',100%,72%,0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(cx, cy, r*1.6, 0, Math.PI*2); ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    // 色相が回る虹リム
+    ctx.lineWidth = Math.max(2, r*0.09);
+    ctx.strokeStyle = 'hsla('+hue+',95%,74%,0.9)';
+    ctx.beginPath(); ctx.arc(cx, cy, r*1.03, 0, Math.PI*2); ctx.stroke();
+    // 周回するキラキラ（3つ・サイズも明滅）
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    for(let i=0;i<3;i++){
+      const a = t*1.8 + i*(Math.PI*2/3);
+      const px = cx + Math.cos(a)*r*1.25;
+      const py = cy + Math.sin(a)*r*1.12;
+      const ss = r*(0.17 + 0.08*Math.sin(t*6 + i*2.1));
+      drawSparkle(px, py, Math.max(r*0.09, ss));
+    }
+    // 本体のツヤ位置のきらめき
+    ctx.globalAlpha = 0.6 + 0.4*Math.sin(t*4);
+    drawSparkle(cx + r*0.5, cy - r*0.72, r*0.28);
+    drawSparkle(cx - r*0.55, cy - r*0.32, r*0.18);
     ctx.restore();
   }
 }
@@ -2410,6 +2436,18 @@ function startGame(){
 
 document.getElementById('startBtn').addEventListener('click', startGame);
 document.getElementById('retryBtn').addEventListener('click', startGame);
+document.getElementById('homeBtn').addEventListener('click', () => {
+  // 盤面を片付けてタイトルへ
+  if(world){ for(const b of [...bodies]) World.remove(world, b); }
+  bodies = [];
+  particles = []; rings = []; scorePops = []; popBubbles = []; flash = 0;
+  current = null;
+  score = 0;           // 背景の深度もタイトル用に浅く戻す
+  state = 'ready';
+  updateTitleBest();   // 更新されたベストをタイトルに反映
+  document.getElementById('overOverlay').classList.remove('show');
+  document.getElementById('startOverlay').classList.add('show');
+});
 document.getElementById('mute').addEventListener('click', (e) => {
   const m = SFX.toggle();
   BGM.setMuted(m);
